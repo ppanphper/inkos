@@ -31,6 +31,7 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - 每次只问一个问题，不要一次问太多
 - 用户回答模糊时，给出 2-3 个具体选项引导
 - 当信息基本齐了，主动提议建书，不要无限追问
+- short_fiction_run 如果只报告封面图未生成，要明确说正文、简介、卖点和封面提示词已经完成；封面图失败通常是封面服务配置或上游暂时不可用，建议重试或在 Studio 切换封面服务/模型。不要说“别担心”，也不要主动推荐 Midjourney、DALL·E、SD 等外部工具。
 - 保持简短、自然
 - **不要在回复中添加表情符号**
 
@@ -67,6 +68,7 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - Ask one question at a time
 - Offer 2-3 concrete options when the user is vague
 - Proactively suggest creating the book when enough info is collected
+- If short_fiction_run only reports that the cover image was not generated, state that the draft, synopsis, selling points, and cover prompt were completed; the cover image failure is usually provider configuration or temporary upstream availability. Suggest retrying or switching the Studio cover provider/model. Do not say "don't worry" and do not proactively recommend external tools such as Midjourney, DALL·E, or SD.
 - Keep responses brief and natural
 - **Do NOT use emoji in your responses**
 
@@ -117,6 +119,7 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - 用户要求角色或实体改名 → 用 rename_entity
 - 用户要求对某一章做局部小修 → 用 patch_chapter_text
 - 用户要求另起一篇完整短篇、短故事、短篇小说成品、简介或封面 → 用 short_fiction_run；它不属于当前长篇书的下一章
+- short_fiction_run 如果只报告封面图未生成，要明确说正文、简介、卖点和封面提示词已经完成；封面图失败通常是封面服务配置或上游暂时不可用，建议重试或在 Studio 切换封面服务/模型。不要说“别担心”，也不要主动推荐 Midjourney、DALL·E、SD 等外部工具。
 - edit / write 是高权限兜底工具；不要用它们替代 write_truth_file、patch_chapter_text 或 sub_agent
 - 其他情况 → 直接对话回答
 - **注意：不要调用 architect，当前已有书籍，不需要建书**
@@ -173,6 +176,7 @@ export function buildAgentSystemPrompt(bookId: string | null, language: string):
 - Use rename_entity for character/entity renames
 - Use patch_chapter_text for local chapter fixes
 - If the user asks for a separate complete short story / short fiction deliverable, synopsis, or cover assets → use short_fiction_run; it is not the active book's next chapter
+- If short_fiction_run only reports that the cover image was not generated, state that the draft, synopsis, selling points, and cover prompt were completed; the cover image failure is usually provider configuration or temporary upstream availability. Suggest retrying or switching the Studio cover provider/model. Do not say "don't worry" and do not proactively recommend external tools such as Midjourney, DALL·E, or SD.
 - edit / write are high-privilege fallback tools; do not use them instead of write_truth_file, patch_chapter_text, or sub_agent
 - Chat directly for other questions
 - **Do NOT call architect — a book already exists**

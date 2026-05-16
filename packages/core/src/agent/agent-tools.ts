@@ -367,12 +367,32 @@ export function createShortFictionRunTool(
           `Final: ${result.finalMarkdownPath}`,
           `Sales package: ${result.salesPackagePath}`,
           `Cover prompt: ${result.coverPromptPath}`,
-          result.coverImagePath ? `Cover image: ${result.coverImagePath}` : `Cover image: skipped (${result.coverError ?? "not generated"})`,
+          result.coverImagePath
+            ? `Cover image: ${result.coverImagePath}`
+            : [
+                "Cover image: not generated.",
+                `Cover image reason: ${summarizeCoverGenerationError(result.coverError)}`,
+                "The short fiction draft, synopsis, selling points, and cover prompt were still written successfully.",
+              ].join("\n"),
         ].join("\n"),
         { kind: "short_fiction_created", ...result },
       );
     },
   };
+}
+
+function summarizeCoverGenerationError(error: string | undefined): string {
+  const text = (error ?? "not generated").trim();
+  if (text.includes("HTTP 503")) {
+    return "cover provider returned HTTP 503; retry later or switch the Studio cover provider/model.";
+  }
+  if (text.includes("HTTP 502")) {
+    return "cover provider returned HTTP 502; retry later or switch the Studio cover provider/model.";
+  }
+  if (/API key is required|api key/i.test(text)) {
+    return "cover API key is missing; configure it in Studio service settings.";
+  }
+  return text.slice(0, 300);
 }
 
 // ---------------------------------------------------------------------------
