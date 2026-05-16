@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LLMClient } from "../llm/provider.js";
@@ -12,6 +12,7 @@ import { saveSecrets } from "../llm/secrets.js";
 import {
   extractGeminiImageBase64,
   extractImagesGenerationImage,
+  generateShortFictionCover,
   resolveCoverGenerationRequest,
 } from "../pipeline/short-fiction-runner.js";
 
@@ -194,5 +195,47 @@ describe("public short-hit chain", () => {
     });
 
     expect(image).toEqual({ base64: "ZmFrZQ==", extension: "jpg" });
+  });
+
+  it("generates a standalone cover artifact without running the short fiction pipeline", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-cover-tool-"));
+    const originalFetch = globalThis.fetch;
+    process.env.INKOS_TEST_COVER_KEY = "sk-cover";
+    try {
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+        data: [{ b64_json: "ZmFrZQ==" }],
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+      globalThis.fetch = fetchMock as never;
+
+      const result = await generateShortFictionCover({
+        projectRoot: root,
+        title: "离婚协议他递了三年",
+        intro: "她签字当天多了十八份附件。",
+        sellingPoints: ["婚姻背叛", "证据反杀"],
+        coverPrompt: "女主冷笑，手里举着离婚协议。",
+        outputDir: "covers/demo",
+        coverEndpoint: "https://images.example.test/v1/images/generations",
+        coverModel: "gpt-image-2",
+        coverApiKeyEnv: "INKOS_TEST_COVER_KEY",
+      });
+
+      expect(result.coverPromptPath).toBe("covers/demo/cover-prompt.md");
+      expect(result.coverImagePath).toBe("covers/demo/cover.png");
+      await expect(readFile(join(root, "covers", "demo", "cover-prompt.md"), "utf-8"))
+        .resolves.toContain("离婚协议他递了三年");
+      await expect(readFile(join(root, "covers", "demo", "cover.png")))
+        .resolves.toEqual(Buffer.from("fake"));
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://images.example.test/v1/images/generations",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining("离婚协议他递了三年"),
+        }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      delete process.env.INKOS_TEST_COVER_KEY;
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

@@ -66,6 +66,27 @@ export interface ShortFictionRunResult {
   readonly coverError?: string;
 }
 
+export interface ShortFictionCoverOptions {
+  readonly projectRoot: string;
+  readonly title: string;
+  readonly intro?: string;
+  readonly sellingPoints?: string | ReadonlyArray<string>;
+  readonly coverPrompt?: string;
+  readonly outputDir?: string;
+  readonly coverBaseUrl?: string;
+  readonly coverEndpoint?: string;
+  readonly coverModel?: string;
+  readonly coverSize?: string;
+  readonly coverApiKeyEnv?: string;
+}
+
+export interface ShortFictionCoverResult {
+  readonly title: string;
+  readonly outputDir: string;
+  readonly coverPromptPath: string;
+  readonly coverImagePath: string;
+}
+
 export async function runShortFictionProduction(
   options: ShortFictionRunOptions,
 ): Promise<ShortFictionRunResult> {
@@ -190,6 +211,44 @@ export async function runShortFictionProduction(
   };
 }
 
+export async function generateShortFictionCover(
+  options: ShortFictionCoverOptions,
+): Promise<ShortFictionCoverResult> {
+  const title = options.title.trim();
+  if (!title) {
+    throw new Error("title is required for cover generation.");
+  }
+
+  const outputDir = normalizeOutputDir(options.outputDir ?? join("covers", safeSegment(title)));
+  const salesPackage: ShortHitSalesPackage = {
+    title,
+    intro: options.intro?.trim() ?? "",
+    sellingPoints: normalizeSellingPoints(options.sellingPoints),
+    coverPrompt: options.coverPrompt?.trim() ?? "",
+    rawContent: "",
+  };
+  const promptPath = join(outputDir, "cover-prompt.md");
+  await writeText(options.projectRoot, promptPath, buildCoverImagePrompt(salesPackage));
+
+  const artifact = await generateCoverImageArtifact({
+    root: options.projectRoot,
+    outputDir,
+    salesPackage,
+    coverBaseUrl: options.coverBaseUrl,
+    coverEndpoint: options.coverEndpoint,
+    coverModel: options.coverModel,
+    coverSize: options.coverSize,
+    coverApiKeyEnv: options.coverApiKeyEnv,
+  });
+
+  return {
+    title,
+    outputDir,
+    coverPromptPath: promptPath,
+    coverImagePath: artifact.coverImagePath,
+  };
+}
+
 async function writeDraftArtifacts(
   root: string,
   baseDir: string,
@@ -254,6 +313,22 @@ async function generateCoverArtifact(input: {
   readonly coverSize?: string;
   readonly coverApiKeyEnv?: string;
 }): Promise<{ readonly coverImagePath: string }> {
+  return generateCoverImageArtifact({
+    ...input,
+    outputDir: join(input.baseDir, "final"),
+  });
+}
+
+async function generateCoverImageArtifact(input: {
+  readonly root: string;
+  readonly outputDir: string;
+  readonly salesPackage: ShortHitSalesPackage;
+  readonly coverBaseUrl?: string;
+  readonly coverEndpoint?: string;
+  readonly coverModel?: string;
+  readonly coverSize?: string;
+  readonly coverApiKeyEnv?: string;
+}): Promise<{ readonly coverImagePath: string }> {
   const request = await resolveCoverGenerationRequest({
     root: input.root,
     coverBaseUrl: input.coverBaseUrl,
@@ -266,7 +341,7 @@ async function generateCoverArtifact(input: {
   if (request.api === "gemini") {
     const prompt = buildCoverImagePrompt(input.salesPackage);
     const payload = await generateGeminiCover(request, prompt);
-    const coverPath = join(input.baseDir, "final", payload.extension === "jpg" ? "cover.jpg" : "cover.png");
+    const coverPath = join(input.outputDir, payload.extension === "jpg" ? "cover.jpg" : "cover.png");
     await writeBinary(input.root, coverPath, Buffer.from(payload.base64, "base64"));
     return { coverImagePath: coverPath };
   }
@@ -274,7 +349,7 @@ async function generateCoverArtifact(input: {
   if (request.api === "images") {
     const prompt = buildCoverImagePrompt(input.salesPackage);
     const payload = await generateImagesCover(request, prompt, size);
-    const coverPath = join(input.baseDir, "final", payload.extension === "jpg" ? "cover.jpg" : "cover.png");
+    const coverPath = join(input.outputDir, payload.extension === "jpg" ? "cover.jpg" : "cover.png");
     await writeBinary(input.root, coverPath, payload.buffer);
     return { coverImagePath: coverPath };
   }
@@ -309,7 +384,7 @@ async function generateCoverArtifact(input: {
     throw new Error("cover generation response did not include image_generation_call result.");
   }
 
-  const coverPath = join(input.baseDir, "final", "cover.png");
+  const coverPath = join(input.outputDir, "cover.png");
   await writeBinary(input.root, coverPath, Buffer.from(imageBase64, "base64"));
   return { coverImagePath: coverPath };
 }
@@ -585,6 +660,16 @@ function buildCoverImagePrompt(salesPackage: ShortHitSalesPackage): string {
     "颜色高对比、高饱和，适合手机列表缩略图。避免写实会议摄影、横版视频缩略图、杂志大片、小清新细字和长段文字。",
     "如果模型文字不稳定，优先生成明确标题留白/字块/排版空间，不要把大量乱码文字铺满画面。",
   ].filter(Boolean).join("\n");
+}
+
+function normalizeSellingPoints(value: string | ReadonlyArray<string> | undefined): ReadonlyArray<string> {
+  if (typeof value === "string" || value === undefined) {
+    return (value ?? "")
+      .split(/[;；\n]/u)
+      .map((point: string) => point.trim())
+      .filter(Boolean);
+  }
+  return value.map((point) => point.trim()).filter(Boolean);
 }
 
 async function writeBinary(root: string, path: string, value: Buffer): Promise<void> {

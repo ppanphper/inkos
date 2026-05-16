@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { StateManager } from "../state/manager.js";
 import {
   createReadTool,
+  createGenerateCoverTool,
   createSubAgentTool,
   createShortFictionRunTool,
   createPatchChapterTextTool,
@@ -236,6 +237,18 @@ describe("agent deterministic writing tools", () => {
     expect(schemaText).toContain("coverModel");
     expect(toolText).not.toContain("benchmark");
     expect(toolText).not.toContain("deconstruction");
+  });
+
+  it("exposes standalone cover generation as its own tool", () => {
+    const tool = createGenerateCoverTool(root);
+    const schemaText = JSON.stringify(tool.parameters);
+    const toolText = JSON.stringify({ description: tool.description, parameters: tool.parameters });
+
+    expect(tool.name).toBe("generate_cover");
+    expect(schemaText).toContain("title");
+    expect(schemaText).toContain("outputDir");
+    expect(schemaText).toContain("coverModel");
+    expect(toolText).not.toContain("short_fiction_run");
   });
 
   it("allows architect revise mode to use the active book", async () => {

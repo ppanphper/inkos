@@ -241,9 +241,12 @@ export {
   type ShortHitReference,
 } from "./agents/short-hit.js";
 export {
+  generateShortFictionCover,
   runShortFictionProduction,
   extractResponsesImageBase64,
   resolveCoverApiKey,
+  type ShortFictionCoverOptions,
+  type ShortFictionCoverResult,
   type ShortFictionRunOptions,
   type ShortFictionRunResult,
   type ShortFictionRunRuntimes,

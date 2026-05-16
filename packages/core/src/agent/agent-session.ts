@@ -16,6 +16,7 @@ import {
   createLsTool,
   createWriteTruthFileTool,
   createShortFictionRunTool,
+  createGenerateCoverTool,
 } from "./agent-tools.js";
 import { createBookContextTransform } from "./context-transform.js";
 import {
@@ -474,13 +475,15 @@ function createAgentToolsForMode(params: {
 }) {
   const subAgentTool = createSubAgentTool(params.pipeline, params.bookId, params.projectRoot);
   const shortFictionTool = createShortFictionRunTool(params.pipeline, params.projectRoot);
+  const generateCoverTool = createGenerateCoverTool(params.projectRoot);
   if (!params.bookId) {
-    return [subAgentTool, shortFictionTool];
+    return [subAgentTool, shortFictionTool, generateCoverTool];
   }
 
   return [
     subAgentTool,
     shortFictionTool,
+    generateCoverTool,
     createReadTool(params.projectRoot, { allowSystemPaths: params.allowSystemFileRead }),
     createWriteTruthFileTool(params.pipeline, params.projectRoot, params.bookId),
     createRenameEntityTool(params.pipeline, params.projectRoot, params.bookId),

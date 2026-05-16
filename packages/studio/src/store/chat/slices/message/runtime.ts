@@ -25,6 +25,7 @@ const TOOL_LABELS: Record<string, string> = {
   grep: "搜索",
   ls: "列目录",
   short_fiction_run: "短篇生产",
+  generate_cover: "生成封面",
 };
 
 export function bookKey(bookId: string | null | undefined): string {

@@ -10,7 +10,7 @@ import { writeExportArtifact } from "../interaction/export-artifact.js";
 import { assertSafeBookId, deriveBookIdFromTitle } from "../utils/book-id.js";
 import { safeChildPath } from "../utils/path-safety.js";
 import { normalizePlatformId, normalizePlatformOrOther } from "../models/book.js";
-import { runShortFictionProduction } from "../pipeline/short-fiction-runner.js";
+import { generateShortFictionCover, runShortFictionProduction } from "../pipeline/short-fiction-runner.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -396,7 +396,88 @@ function summarizeCoverGenerationError(error: string | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Deterministic writing tools
+// 3. Standalone Cover Tool
+// ---------------------------------------------------------------------------
+
+const GenerateCoverParams = Type.Object({
+  title: Type.String({
+    description: "Required book or short-fiction title. Use the real story title when regenerating an existing cover.",
+  }),
+  intro: Type.Optional(Type.String({
+    description: "Optional synopsis or one-paragraph story hook to guide the cover.",
+  })),
+  sellingPoints: Type.Optional(Type.String({
+    description: "Optional selling points separated by semicolons or new lines, e.g. 婚姻背叛；证据反杀；女主冷笑.",
+  })),
+  coverPrompt: Type.Optional(Type.String({
+    description: "Optional concrete visual direction. Keep it short and commercial; do not paste the whole story.",
+  })),
+  outputDir: Type.Optional(Type.String({
+    description: "Optional project-relative directory for cover-prompt.md and cover.png. For an existing short, use its final directory.",
+  })),
+  coverBaseUrl: Type.Optional(Type.String({
+    description: "Optional image API base URL. Usually omit and use Studio cover config.",
+  })),
+  coverEndpoint: Type.Optional(Type.String({
+    description: "Optional exact image endpoint. Overrides coverBaseUrl.",
+  })),
+  coverModel: Type.Optional(Type.String({
+    description: "Optional image model. Usually omit and use Studio cover config.",
+  })),
+  coverSize: Type.Optional(Type.String({
+    description: "Optional image size, default 1024x1360.",
+  })),
+  coverApiKeyEnv: Type.Optional(Type.String({
+    description: "Optional env var containing the cover API key. Usually omit and use Studio cover config.",
+  })),
+});
+
+type GenerateCoverParamsType = Static<typeof GenerateCoverParams>;
+
+export function createGenerateCoverTool(
+  projectRoot: string,
+): AgentTool<typeof GenerateCoverParams> {
+  return {
+    name: "generate_cover",
+    description:
+      "Generate only a cover image and cover prompt from a title/synopsis/visual direction. " +
+      "Use this when the user asks to create or regenerate a cover without rerunning story generation.",
+    label: "Generate Cover",
+    parameters: GenerateCoverParams,
+    async execute(
+      _toolCallId: string,
+      params: GenerateCoverParamsType,
+      _signal?: AbortSignal,
+      onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
+      onUpdate?.(textResult("Generating cover image..."));
+      const result = await generateShortFictionCover({
+        projectRoot,
+        title: params.title,
+        intro: params.intro,
+        sellingPoints: params.sellingPoints,
+        coverPrompt: params.coverPrompt,
+        outputDir: params.outputDir,
+        coverBaseUrl: params.coverBaseUrl,
+        coverEndpoint: params.coverEndpoint,
+        coverModel: params.coverModel,
+        coverSize: params.coverSize,
+        coverApiKeyEnv: params.coverApiKeyEnv,
+      });
+      return textResult(
+        [
+          `Cover generated for "${result.title}".`,
+          `Cover prompt: ${result.coverPromptPath}`,
+          `Cover image: ${result.coverImagePath}`,
+        ].join("\n"),
+        { kind: "cover_generated", ...result },
+      );
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 4. Deterministic writing tools
 // ---------------------------------------------------------------------------
 
 const WriteTruthFileParams = Type.Object({

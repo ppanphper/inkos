@@ -89,7 +89,7 @@ function extractResultPath(result: string | undefined, label: string): string | 
 }
 
 function ShortFictionResultPreview({ exec }: { exec: ToolExecution }) {
-  if (exec.tool !== "short_fiction_run" || exec.status !== "completed") return null;
+  if (!["short_fiction_run", "generate_cover"].includes(exec.tool) || exec.status !== "completed") return null;
   const coverPath = extractResultPath(exec.result, "Cover image");
   if (!coverPath || !/\.(png|jpe?g|webp)$/iu.test(coverPath)) return null;
 

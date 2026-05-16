@@ -460,7 +460,7 @@ describe("runAgentSession cache — bookId switch", () => {
     }
   });
 
-  it("registers creation and standalone short-fiction tools when no book is active", async () => {
+  it("registers creation, cover, and standalone short-fiction tools when no book is active", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
     const pipeline = {} as any;
 
@@ -469,7 +469,7 @@ describe("runAgentSession cache — bookId switch", () => {
       "hi",
     );
 
-    expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual(["sub_agent", "short_fiction_run"]);
+    expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual(["sub_agent", "short_fiction_run", "generate_cover"]);
   });
 
   it("把真实 Agent 的 message_end 写入 JSONL，并在 cache 失效后恢复 raw AgentMessage", async () => {
