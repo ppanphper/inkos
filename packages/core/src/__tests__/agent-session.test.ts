@@ -460,7 +460,7 @@ describe("runAgentSession cache — bookId switch", () => {
     }
   });
 
-  it("registers creation, cover, and standalone short-fiction tools when no book is active", async () => {
+  it("registers creation, short-fiction, cover, and play tools when no book is active", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
     const pipeline = {} as any;
 
@@ -469,7 +469,13 @@ describe("runAgentSession cache — bookId switch", () => {
       "hi",
     );
 
-    expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual(["sub_agent", "short_fiction_run", "generate_cover"]);
+    expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual([
+      "sub_agent",
+      "short_fiction_run",
+      "generate_cover",
+      "play_start",
+      "play_step",
+    ]);
   });
 
   it("does not expose generic write/edit tools to active-book chat agents", async () => {
@@ -485,6 +491,8 @@ describe("runAgentSession cache — bookId switch", () => {
       "sub_agent",
       "short_fiction_run",
       "generate_cover",
+      "play_start",
+      "play_step",
       "read",
       "write_truth_file",
       "rename_entity",

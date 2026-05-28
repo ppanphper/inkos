@@ -23,6 +23,13 @@ interface PlayFileDBData {
   readonly events: Record<string, PlayEvent>;
 }
 
+export interface PlayGraphSnapshot {
+  readonly entities: PlayEntity[];
+  readonly edges: PlayEdge[];
+  readonly stateSlots: PlayStateSlot[];
+  readonly events: PlayEvent[];
+}
+
 export class PlayFileDB implements PlayReducerDB {
   private readonly filePath: string;
   private data: PlayFileDBData;
@@ -92,6 +99,15 @@ export class PlayFileDB implements PlayReducerDB {
 
   getEvent(id: string): PlayEvent | null {
     return this.data.events[id] ?? null;
+  }
+
+  snapshot(): PlayGraphSnapshot {
+    return {
+      entities: Object.values(this.data.entities).sort((a, b) => a.id.localeCompare(b.id)),
+      edges: Object.values(this.data.edges).sort((a, b) => a.id.localeCompare(b.id)),
+      stateSlots: Object.values(this.data.stateSlots).sort((a, b) => a.id.localeCompare(b.id)),
+      events: Object.values(this.data.events).sort((a, b) => a.turn - b.turn || a.id.localeCompare(b.id)),
+    };
   }
 
   transaction<T>(fn: () => T): T {

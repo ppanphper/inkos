@@ -7,6 +7,10 @@ export {
   createPatchChapterTextTool,
   createEditTool,
   createWriteFileTool,
+  createShortFictionRunTool,
+  createGenerateCoverTool,
+  createPlayStartTool,
+  createPlayStepTool,
   createGrepTool,
   createLsTool,
 } from "./agent-tools.js";

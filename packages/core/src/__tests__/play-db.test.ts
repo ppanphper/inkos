@@ -131,6 +131,11 @@ describe("PlayDB", () => {
 
       expect(db.getStateSlotsForEntity("actor_husband")[0]?.label).toBe("丈夫警觉");
       expect(db.getEvent("event-0002")?.actionKind).toBe("say");
+      expect(db.snapshot()).toMatchObject({
+        entities: [expect.objectContaining({ id: "actor_husband" })],
+        stateSlots: [expect.objectContaining({ id: "slot_husband_suspicion" })],
+        events: [expect.objectContaining({ id: "event-0002" })],
+      });
     } finally {
       db.close();
       await rm(root, { recursive: true, force: true });

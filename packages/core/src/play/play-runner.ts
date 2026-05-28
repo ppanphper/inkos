@@ -127,6 +127,7 @@ export class PlayRunner {
       mutationSummary: mutation.summary || mutation.blockedReason,
       stateBrief,
     });
+    await this.store.writeProjection(this.options.worldId, this.options.runId, "projections/scene.md", `${render.sceneText}\n`);
     await this.store.appendTranscriptTurn(this.options.worldId, this.options.runId, {
       role: "assistant",
       content: render.sceneText,

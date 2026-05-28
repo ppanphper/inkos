@@ -99,6 +99,16 @@ export interface GeneratedArtifactDetails {
   readonly coverError?: string;
 }
 
+export interface PlayToolDetails {
+  readonly kind: "play_world_started" | "play_turn_advanced";
+  readonly title?: string;
+  readonly worldId?: string;
+  readonly runId?: string;
+  readonly sceneText?: string;
+  readonly suggestedActions?: readonly string[];
+  readonly playUrl?: string;
+}
+
 function stringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" && value.trim() ? value : undefined;
@@ -154,8 +164,60 @@ function ShortFictionResultPreview({ exec }: { exec: ToolExecution }) {
   );
 }
 
+export function getPlayToolDetails(exec: ToolExecution): PlayToolDetails | null {
+  if (!["play_start", "play_step"].includes(exec.tool)) return null;
+  if (!exec.details || typeof exec.details !== "object") return null;
+  const record = exec.details as Record<string, unknown>;
+  if (record.kind !== "play_world_started" && record.kind !== "play_turn_advanced") return null;
+  const suggested = Array.isArray(record.suggestedActions)
+    ? record.suggestedActions.filter((item): item is string => typeof item === "string")
+    : [];
+  return {
+    kind: record.kind,
+    title: stringField(record, "title"),
+    worldId: stringField(record, "worldId"),
+    runId: stringField(record, "runId"),
+    sceneText: stringField(record, "sceneText"),
+    suggestedActions: suggested,
+    playUrl: stringField(record, "playUrl"),
+  };
+}
+
+function PlayResultPreview({ exec }: { exec: ToolExecution }) {
+  if (!["play_start", "play_step"].includes(exec.tool) || exec.status !== "completed") return null;
+  const details = getPlayToolDetails(exec);
+  if (!details?.sceneText) return null;
+  return (
+    <div className="mx-3 mb-3 mt-1 rounded-xl border border-primary/20 bg-primary/5 px-3 py-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-semibold text-primary">
+          {details.kind === "play_world_started" ? "互动世界已启动" : "互动世界已推进"}
+        </div>
+        <a href={details.playUrl ?? "#/play"} className="text-xs text-muted-foreground underline underline-offset-2">
+          查看状态
+        </a>
+      </div>
+      <div className="whitespace-pre-wrap text-sm leading-6 text-foreground">{details.sceneText}</div>
+      {details.suggestedActions && details.suggestedActions.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {details.suggestedActions.slice(0, 4).map((action) => (
+            <span key={action} className="rounded-full border border-border/60 bg-background/70 px-2 py-1 text-[11px] text-muted-foreground">
+              {action}
+            </span>
+          ))}
+        </div>
+      )}
+      {(details.worldId || details.runId) && (
+        <div className="mt-2 text-[11px] text-muted-foreground">
+          {details.worldId}{details.runId ? ` / ${details.runId}` : ""}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function isPipelineTool(tool: string): boolean {
-  return tool === "sub_agent" || tool === "short_fiction_run" || tool === "generate_cover";
+  return tool === "sub_agent" || tool === "short_fiction_run" || tool === "generate_cover" || tool === "play_start" || tool === "play_step";
 }
 
 // -- Live elapsed timer hook --
@@ -208,6 +270,7 @@ function PipelineExecution({ exec }: { exec: ToolExecution }) {
         </div>
       </CollapsibleTrigger>
       <ShortFictionResultPreview exec={exec} />
+      <PlayResultPreview exec={exec} />
       <CollapsibleContent>
         <div className="px-3 pb-3 pt-1">
           {/* Real-time execution logs */}

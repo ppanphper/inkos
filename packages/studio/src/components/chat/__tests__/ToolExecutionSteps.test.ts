@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { ToolExecution } from "../../../store/chat/types";
-import { getGeneratedArtifactDetails, groupToolExecutionsChronologically } from "../ToolExecutionSteps";
+import { getGeneratedArtifactDetails, getPlayToolDetails, groupToolExecutionsChronologically } from "../ToolExecutionSteps";
 
 const makeExec = (overrides: Partial<ToolExecution> & { id: string; tool: string }): ToolExecution => ({
   label: "test",
@@ -89,6 +89,22 @@ describe("groupChronologically", () => {
     expect(groups[2].type === "pipeline" ? groups[2].exec.tool : "").toBe("short_fiction_run");
   });
 
+  it("renders play tools as visible pipeline cards", () => {
+    const execs: ToolExecution[] = [
+      makeExec({ id: "1", tool: "read", label: "读取文件" }),
+      makeExec({ id: "2", tool: "play_start", label: "启动互动世界" }),
+      makeExec({ id: "3", tool: "play_step", label: "推进互动世界" }),
+      makeExec({ id: "4", tool: "grep", label: "搜索" }),
+    ];
+
+    const groups = groupToolExecutionsChronologically(execs);
+
+    expect(groups).toHaveLength(4);
+    expect(groups.map((group) => group.type)).toEqual(["utilities", "pipeline", "pipeline", "utilities"]);
+    expect(groups[1].type === "pipeline" ? groups[1].exec.tool : "").toBe("play_start");
+    expect(groups[2].type === "pipeline" ? groups[2].exec.tool : "").toBe("play_step");
+  });
+
   it("extracts generated cover details from public short fiction tools", () => {
     const exec = makeExec({
       id: "short-1",
@@ -109,6 +125,31 @@ describe("groupChronologically", () => {
       finalMarkdownPath: "shorts/demo-story/final/full.md",
       salesPackagePath: "shorts/demo-story/final/sales-package.md",
       coverImagePath: "shorts/demo-story/final/cover.png",
+    });
+  });
+
+  it("extracts play scene details from play tools", () => {
+    const exec = makeExec({
+      id: "play-1",
+      tool: "play_step",
+      label: "推进互动世界",
+      details: {
+        kind: "play_turn_advanced",
+        title: "雨夜茶馆",
+        worldId: "rain-teahouse",
+        runId: "main",
+        sceneText: "你翻开账本，发现一张旧船票。",
+        suggestedActions: ["藏起船票", "追问来人"],
+      },
+    });
+
+    expect(getPlayToolDetails(exec)).toMatchObject({
+      kind: "play_turn_advanced",
+      title: "雨夜茶馆",
+      worldId: "rain-teahouse",
+      runId: "main",
+      sceneText: "你翻开账本，发现一张旧船票。",
+      suggestedActions: ["藏起船票", "追问来人"],
     });
   });
 });

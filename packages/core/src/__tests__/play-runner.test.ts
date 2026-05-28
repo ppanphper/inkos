@@ -134,5 +134,7 @@ describe("PlayRunner", () => {
       .resolves.toContain("我假装看天气");
     await expect(readFile(join(runDir, "projections", "state.md"), "utf-8"))
       .resolves.toContain("发现新城花园 187 次");
+    await expect(readFile(join(runDir, "projections", "scene.md"), "utf-8"))
+      .resolves.toContain("屏幕弹出新城花园 187 次");
   });
 });

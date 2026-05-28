@@ -18,6 +18,23 @@ describe("PlayFileDB", () => {
   it("persists graph state across instances", () => {
     const db = new PlayFileDB(dir);
     db.upsertEntity({ id: "player", type: "actor", label: "宋词" });
+    db.upsertEntity({ id: "claim-hidden-home", type: "claim", label: "隐瞒同居地点" });
+    db.upsertEdge({
+      id: "edge-player-claim",
+      fromId: "player",
+      type: "investigates",
+      toId: "claim-hidden-home",
+      validFromEventId: "evt-1",
+      sourceEventId: "evt-1",
+    });
+    db.upsertStateSlot({
+      id: "pressure-player-risk",
+      ownerEntityId: "player",
+      kind: "pressure",
+      label: "暴露风险",
+      value: { current: 20, min: 0, max: 100 },
+      updatedEventId: "evt-1",
+    });
     db.recordEvent({
       id: "evt-1",
       turn: 1,
@@ -31,6 +48,12 @@ describe("PlayFileDB", () => {
     const reopened = new PlayFileDB(dir);
     expect(reopened.getEntity("player")?.label).toBe("宋词");
     expect(reopened.getEvent("evt-1")?.rawInput).toBe("看导航");
+    expect(reopened.snapshot()).toMatchObject({
+      entities: [expect.objectContaining({ id: "claim-hidden-home" }), expect.objectContaining({ id: "player" })],
+      edges: [expect.objectContaining({ id: "edge-player-claim" })],
+      stateSlots: [expect.objectContaining({ id: "pressure-player-risk" })],
+      events: [expect.objectContaining({ id: "evt-1" })],
+    });
   });
 
   it("rolls back transaction mutations when validation fails inside the transaction", () => {

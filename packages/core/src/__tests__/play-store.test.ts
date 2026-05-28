@@ -5,6 +5,36 @@ import { describe, expect, it } from "vitest";
 import { PlayStore } from "../play/play-store.js";
 
 describe("PlayStore", () => {
+  it("creates and lists worlds and runs with metadata", async () => {
+    const root = await mkdtemp(join(tmpdir(), "inkos-play-store-"));
+    const store = new PlayStore(root);
+
+    try {
+      await store.createWorld({
+        id: "rain-teahouse",
+        title: "雨夜茶馆",
+        premise: "主角在雨夜茶馆查一笔旧账。",
+        mode: "open",
+      });
+      await store.ensureRun("rain-teahouse", "run-001");
+      await store.ensureRun("rain-teahouse", "run-002");
+
+      await expect(store.listWorlds()).resolves.toEqual([
+        expect.objectContaining({
+          id: "rain-teahouse",
+          title: "雨夜茶馆",
+          premise: "主角在雨夜茶馆查一笔旧账。",
+          mode: "open",
+        }),
+      ]);
+      const runs = await store.listRuns("rain-teahouse");
+      expect(runs.map((run) => run.id).sort()).toEqual(["run-001", "run-002"]);
+      expect(runs[0]).toMatchObject({ eventCount: 0, transcriptCount: 0 });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("creates world/run storage and persists JSONL events", async () => {
     const root = await mkdtemp(join(tmpdir(), "inkos-play-store-"));
     const store = new PlayStore(root);

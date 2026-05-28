@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join, normalize, sep } from "node:path";
 import { z } from "zod";
 import { PlayEventSchema, type PlayEvent } from "../models/play.js";
@@ -12,6 +12,28 @@ const PlayTranscriptTurnSchema = z.object({
 });
 
 export type PlayTranscriptTurn = z.infer<typeof PlayTranscriptTurnSchema>;
+
+const PlayWorldSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  premise: z.string().default(""),
+  mode: z.enum(["open", "guided"]).default("open"),
+  createdAt: z.string().min(1),
+  updatedAt: z.string().min(1),
+});
+
+export type PlayWorld = z.infer<typeof PlayWorldSchema>;
+export type PlayWorldInput = Omit<z.input<typeof PlayWorldSchema>, "createdAt" | "updatedAt"> & {
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+};
+
+export interface PlayRunSummary {
+  readonly id: string;
+  readonly updatedAt: string;
+  readonly eventCount: number;
+  readonly transcriptCount: number;
+}
 
 export class PlayStore {
   constructor(private readonly projectRoot: string) {}
@@ -28,6 +50,60 @@ export class PlayStore {
     await mkdir(this.worldDir(worldId), { recursive: true });
   }
 
+  async createWorld(input: PlayWorldInput): Promise<PlayWorld> {
+    const now = new Date().toISOString();
+    const world = PlayWorldSchema.parse({
+      ...input,
+      id: assertSafeSegment(input.id),
+      createdAt: input.createdAt ?? now,
+      updatedAt: input.updatedAt ?? now,
+    });
+    await this.ensureWorld(world.id);
+    await writeFile(
+      join(this.worldDir(world.id), "world.json"),
+      `${JSON.stringify(world, null, 2)}\n`,
+      "utf-8",
+    );
+    return world;
+  }
+
+  async loadWorld(worldId: string): Promise<PlayWorld | null> {
+    try {
+      const raw = await readFile(join(this.worldDir(worldId), "world.json"), "utf-8");
+      const parsed = PlayWorldSchema.safeParse(JSON.parse(raw));
+      return parsed.success ? parsed.data : null;
+    } catch {
+      return null;
+    }
+  }
+
+  async listWorlds(): Promise<PlayWorld[]> {
+    const worldsRoot = join(this.projectRoot, WORLDS_DIR);
+    let entries: string[];
+    try {
+      entries = await readdir(worldsRoot);
+    } catch {
+      return [];
+    }
+
+    const worlds: PlayWorld[] = [];
+    for (const entry of entries.sort()) {
+      if (!isSafeSegment(entry)) continue;
+      const entryStat = await stat(join(worldsRoot, entry)).catch(() => null);
+      if (!entryStat?.isDirectory()) continue;
+      const world = await this.loadWorld(entry);
+      worlds.push(world ?? PlayWorldSchema.parse({
+        id: entry,
+        title: entry,
+        premise: "",
+        mode: "open",
+        createdAt: entryStat.birthtime.toISOString(),
+        updatedAt: entryStat.mtime.toISOString(),
+      }));
+    }
+    return worlds.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
+  }
+
   async ensureRun(worldId: string, runId: string): Promise<void> {
     const dir = this.runDir(worldId, runId);
     await Promise.all([
@@ -37,6 +113,35 @@ export class PlayStore {
       mkdir(join(dir, "summaries"), { recursive: true }),
       mkdir(join(dir, "checkpoints"), { recursive: true }),
     ]);
+  }
+
+  async listRuns(worldId: string): Promise<PlayRunSummary[]> {
+    const runsRoot = join(this.worldDir(worldId), "runs");
+    let entries: string[];
+    try {
+      entries = await readdir(runsRoot);
+    } catch {
+      return [];
+    }
+
+    const runs: PlayRunSummary[] = [];
+    for (const entry of entries.sort()) {
+      if (!isSafeSegment(entry)) continue;
+      const runDir = join(runsRoot, entry);
+      const entryStat = await stat(runDir).catch(() => null);
+      if (!entryStat?.isDirectory()) continue;
+      const [events, transcript] = await Promise.all([
+        this.readEvents(worldId, entry),
+        this.readTranscript(worldId, entry),
+      ]);
+      runs.push({
+        id: entry,
+        updatedAt: entryStat.mtime.toISOString(),
+        eventCount: events.length,
+        transcriptCount: transcript.length,
+      });
+    }
+    return runs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
   }
 
   async appendEvent(worldId: string, runId: string, event: PlayEvent): Promise<void> {
@@ -155,8 +260,17 @@ export class PlayStore {
 }
 
 function assertSafeSegment(value: string): string {
-  if (!value || value.includes("/") || value.includes("\\") || value.includes("\0") || value === "." || value === "..") {
+  if (!isSafeSegment(value)) {
     throw new Error(`Unsafe play path segment: ${value}`);
   }
   return value;
+}
+
+function isSafeSegment(value: string): boolean {
+  return Boolean(value) &&
+    !value.includes("/") &&
+    !value.includes("\\") &&
+    !value.includes("\0") &&
+    value !== "." &&
+    value !== "..";
 }

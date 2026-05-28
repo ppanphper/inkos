@@ -79,8 +79,8 @@ export {
   type PlaySceneRender,
 } from "./play/play-agents.js";
 export { PlayDB } from "./play/play-db.js";
-export { createPlayDB } from "./play/play-db-factory.js";
-export { PlayFileDB } from "./play/play-file-db.js";
+export { createPlayDB, type PlayGraphDB } from "./play/play-db-factory.js";
+export { PlayFileDB, type PlayGraphSnapshot } from "./play/play-file-db.js";
 export {
   applyPlayMutation,
   type PlayReducerDB,
@@ -95,7 +95,7 @@ export {
   type PlayRunnerOptions,
   type PlayStepResult,
 } from "./play/play-runner.js";
-export { PlayStore, type PlayTranscriptTurn } from "./play/play-store.js";
+export { PlayStore, type PlayTranscriptTurn, type PlayWorld, type PlayWorldInput, type PlayRunSummary } from "./play/play-store.js";
 export {
   type ChapterMemo,
   type ChapterIntent,

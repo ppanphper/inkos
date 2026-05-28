@@ -11,6 +11,10 @@ import { assertSafeBookId, deriveBookIdFromTitle } from "../utils/book-id.js";
 import { safeChildPath } from "../utils/path-safety.js";
 import { normalizePlatformId, normalizePlatformOrOther } from "../models/book.js";
 import { generateShortFictionCover, runShortFictionProduction } from "../pipeline/short-fiction-runner.js";
+import { createPlayDB, type PlayGraphDB } from "../play/play-db-factory.js";
+import { PlayRunner, type PlayStepResult } from "../play/play-runner.js";
+import { PlayStore, type PlayWorld } from "../play/play-store.js";
+import type { AgentContext } from "../agents/base.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -49,6 +53,40 @@ function resolveToolBookId(
 function createDeterministicInteractionTools(pipeline: PipelineRunner, projectRoot: string) {
   const state = new StateManager(projectRoot);
   return createInteractionToolsFromDeps(pipeline, state);
+}
+
+function closePlayDB(db: PlayGraphDB): void {
+  db.close?.();
+}
+
+function safePlayId(value: string | undefined, fallback: string): string {
+  const raw = (value?.trim() || fallback).slice(0, 80);
+  if (!raw || raw === "." || raw === ".." || raw.includes("/") || raw.includes("\\") || raw.includes("\0")) {
+    throw new Error(`Invalid play id: ${JSON.stringify(value)}`);
+  }
+  return raw;
+}
+
+async function latestPlayTarget(
+  store: PlayStore,
+  worldId: string | undefined,
+  runId: string | undefined,
+): Promise<{ worldId: string; runId: string; world: PlayWorld | null }> {
+  const safeWorldId = worldId?.trim() ? safePlayId(worldId, "main") : undefined;
+  const world = safeWorldId
+    ? await store.loadWorld(safeWorldId)
+    : (await store.listWorlds())[0] ?? null;
+  const resolvedWorldId = world?.id ?? safeWorldId;
+  if (!resolvedWorldId) {
+    throw new Error("No play world found. Start one first with play_start.");
+  }
+  const safeRunId = runId?.trim() ? safePlayId(runId, "main") : undefined;
+  const latestRun = safeRunId ? null : (await store.listRuns(resolvedWorldId))[0] ?? null;
+  return {
+    worldId: resolvedWorldId,
+    runId: safeRunId ?? latestRun?.id ?? "main",
+    world,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -477,7 +515,215 @@ export function createGenerateCoverTool(
 }
 
 // ---------------------------------------------------------------------------
-// 4. Deterministic writing tools
+// 4. Interactive Play tools
+// ---------------------------------------------------------------------------
+
+const PlayStartParams = Type.Object({
+  title: Type.String({
+    description: "Interactive world title. Use the user's natural direction as a short playable world title.",
+  }),
+  premise: Type.Optional(Type.String({
+    description: "Playable premise: player role, location, pressure, and core conflict. Keep it concise.",
+  })),
+  mode: Type.Optional(Type.Union([
+    Type.Literal("open"),
+    Type.Literal("guided"),
+  ], { description: "open = free actions; guided = emphasize suggested actions. Default open." })),
+  worldId: Type.Optional(Type.String({
+    description: "Optional stable world id under worlds/. Usually omit and derive from title.",
+  })),
+  runId: Type.Optional(Type.String({
+    description: "Optional run id. Default main.",
+  })),
+  initialScene: Type.Optional(Type.String({
+    description: "Opening scene shown to the player. Write this as the first playable moment, not as a config summary.",
+  })),
+  suggestedActions: Type.Optional(Type.Array(Type.String({
+    description: "2-4 immediate actions the player can click or copy.",
+  }))),
+});
+
+type PlayStartParamsType = Static<typeof PlayStartParams>;
+
+export function createPlayStartTool(
+  projectRoot: string,
+): AgentTool<typeof PlayStartParams> {
+  return {
+    name: "play_start",
+    description:
+      "Start an interactive InkOS Play world directly from chat. " +
+      "Use when the user asks to play, roleplay, run an open-world interactive story, or start a Tavern-like scene.",
+    label: "Start Play",
+    parameters: PlayStartParams,
+    async execute(
+      _toolCallId: string,
+      params: PlayStartParamsType,
+      _signal?: AbortSignal,
+      onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
+      onUpdate?.(textResult("Starting interactive world..."));
+      const store = new PlayStore(projectRoot);
+      const baseId = deriveBookIdFromTitle(params.title) || `play-${Date.now().toString(36)}`;
+      const worldId = safePlayId(params.worldId, baseId);
+      const runId = safePlayId(params.runId, "main");
+      const world = await store.createWorld({
+        id: worldId,
+        title: params.title.trim(),
+        premise: params.premise?.trim() ?? "",
+        mode: params.mode ?? "open",
+      });
+      await store.ensureRun(world.id, runId);
+
+      const existingTranscript = await store.readTranscript(world.id, runId);
+      const sceneText = (params.initialScene?.trim() || [
+        `你进入「${world.title}」。`,
+        world.premise ? world.premise : "场景已经就位，等待你的第一个动作。",
+      ].join("\n")).trim();
+      if (existingTranscript.length === 0) {
+        await store.writeProjection(world.id, runId, "projections/scene.md", `${sceneText}\n`);
+        await store.saveCurrentState(world.id, runId, {
+          turn: 0,
+          worldId: world.id,
+          runId,
+          mode: world.mode,
+          premise: world.premise,
+        });
+        await store.appendTranscriptTurn(world.id, runId, {
+          role: "assistant",
+          content: sceneText,
+          timestamp: Date.now(),
+        });
+      }
+
+      const suggestedActions = (params.suggestedActions ?? [])
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .slice(0, 4);
+
+      return textResult(
+        [
+          `Interactive world "${world.title}" started.`,
+          `World: ${world.id}`,
+          `Run: ${runId}`,
+          `Open: #/play`,
+          "",
+          sceneText,
+          suggestedActions.length > 0 ? `\nSuggested actions:\n${suggestedActions.map((action) => `- ${action}`).join("\n")}` : "",
+        ].filter(Boolean).join("\n"),
+        {
+          kind: "play_world_started",
+          worldId: world.id,
+          runId,
+          title: world.title,
+          mode: world.mode,
+          premise: world.premise,
+          sceneText,
+          suggestedActions,
+          playUrl: "#/play",
+        },
+      );
+    },
+  };
+}
+
+const PlayStepParams = Type.Object({
+  input: Type.String({
+    description: "The player's next free-form action or chosen option.",
+  }),
+  worldId: Type.Optional(Type.String({
+    description: "Optional target world id. Omit to continue the most recently updated play world.",
+  })),
+  runId: Type.Optional(Type.String({
+    description: "Optional run id. Omit to continue the most recently updated run.",
+  })),
+});
+
+type PlayStepParamsType = Static<typeof PlayStepParams>;
+
+export interface PlayStepToolOptions {
+  readonly runnerFactory?: (input: {
+    readonly projectRoot: string;
+    readonly worldId: string;
+    readonly runId: string;
+    readonly ctx: AgentContext;
+  }) => { step(input: string): Promise<PlayStepResult> };
+}
+
+export function createPlayStepTool(
+  pipeline: PipelineRunner,
+  projectRoot: string,
+  options: PlayStepToolOptions = {},
+): AgentTool<typeof PlayStepParams> {
+  return {
+    name: "play_step",
+    description:
+      "Advance the current InkOS Play world by one player action. " +
+      "Use after play_start when the user keeps acting in the interactive scene.",
+    label: "Play Step",
+    parameters: PlayStepParams,
+    async execute(
+      _toolCallId: string,
+      params: PlayStepParamsType,
+      _signal?: AbortSignal,
+      onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
+      const input = params.input.trim();
+      if (!input) return textResult("Play input is empty.");
+      const store = new PlayStore(projectRoot);
+      const target = await latestPlayTarget(store, params.worldId, params.runId);
+      onUpdate?.(textResult(`Advancing "${target.worldId}" / "${target.runId}"...`));
+      const ctx = pipeline.createAgentContext("play");
+      const runner = options.runnerFactory?.({
+        projectRoot,
+        worldId: target.worldId,
+        runId: target.runId,
+        ctx,
+      }) ?? new PlayRunner({
+        projectRoot,
+        worldId: target.worldId,
+        runId: target.runId,
+        ctx,
+      });
+      const step = await runner.step(input);
+
+      const db = createPlayDB(store.runDir(target.worldId, target.runId));
+      let graph;
+      try {
+        graph = db.snapshot();
+      } finally {
+        closePlayDB(db);
+      }
+      const currentState = await store.loadCurrentState(target.worldId, target.runId).catch(() => null);
+
+      return textResult(
+        [
+          `Play advanced: ${target.worldId}/${target.runId}`,
+          "",
+          step.sceneText,
+          step.suggestedActions.length > 0
+            ? `\nSuggested actions:\n${step.suggestedActions.map((action) => `- ${action}`).join("\n")}`
+            : "",
+        ].filter(Boolean).join("\n"),
+        {
+          kind: "play_turn_advanced",
+          worldId: target.worldId,
+          runId: target.runId,
+          title: target.world?.title,
+          sceneText: step.sceneText,
+          suggestedActions: step.suggestedActions,
+          action: step.action,
+          mutation: step.mutation,
+          currentState,
+          graph,
+          playUrl: "#/play",
+        },
+      );
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// 5. Deterministic writing tools
 // ---------------------------------------------------------------------------
 
 const WriteTruthFileParams = Type.Object({

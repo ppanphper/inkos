@@ -46,9 +46,20 @@ describe("buildAgentSystemPrompt", () => {
       const zhPrompt = buildAgentSystemPrompt(null, "zh");
       const enPrompt = buildAgentSystemPrompt(null, "en");
       expect(zhPrompt).toContain("用户只是提问、闲聊、了解能力或讨论方案时，直接用文字回答");
-      expect(zhPrompt).toContain("不要调用 sub_agent、short_fiction_run 或 generate_cover");
+      expect(zhPrompt).toContain("不要调用 sub_agent、short_fiction_run、generate_cover、play_start 或 play_step");
       expect(enPrompt).toContain("If the user is only asking a question, chatting, exploring capabilities, or discussing options, answer directly");
-      expect(enPrompt).toContain("do not call sub_agent, short_fiction_run, or generate_cover");
+      expect(enPrompt).toContain("do not call sub_agent, short_fiction_run, generate_cover, play_start, or play_step");
+    });
+
+    it("no-book prompt routes interactive fiction to play tools", () => {
+      const zhPrompt = buildAgentSystemPrompt(null, "zh");
+      const enPrompt = buildAgentSystemPrompt(null, "en");
+      expect(zhPrompt).toContain("互动世界 / InkOS Play");
+      expect(zhPrompt).toContain("调用 play_start");
+      expect(zhPrompt).toContain("调用 play_step 推进当前互动世界");
+      expect(enPrompt).toContain("Interactive world / InkOS Play");
+      expect(enPrompt).toContain("call play_start");
+      expect(enPrompt).toContain("call play_step");
     });
 
     it("English prompt forbids emoji", () => {

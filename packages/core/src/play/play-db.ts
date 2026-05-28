@@ -15,6 +15,7 @@ import {
   type PlayStateSlot,
   type PlayStateSlotInput,
 } from "../models/play.js";
+import type { PlayGraphSnapshot } from "./play-file-db.js";
 
 const require = createRequire(import.meta.url);
 
@@ -243,6 +244,27 @@ export class PlayDB {
       `SELECT ${EVENT_SELECT_COLUMNS} FROM events WHERE id = ?`,
     ).get(id) as EventRow | undefined;
     return row ? PlayEventSchema.parse(row) : null;
+  }
+
+  snapshot(): PlayGraphSnapshot {
+    const entities = this.db.prepare(
+      `SELECT ${ENTITY_SELECT_COLUMNS} FROM entities ORDER BY id`,
+    ).all() as EntityRow[];
+    const edges = this.db.prepare(
+      `SELECT ${EDGE_SELECT_COLUMNS} FROM edges ORDER BY id`,
+    ).all() as EdgeRow[];
+    const stateSlots = this.db.prepare(
+      `SELECT ${STATE_SLOT_SELECT_COLUMNS} FROM state_slots ORDER BY id`,
+    ).all() as StateSlotRow[];
+    const events = this.db.prepare(
+      `SELECT ${EVENT_SELECT_COLUMNS} FROM events ORDER BY turn, id`,
+    ).all() as EventRow[];
+    return {
+      entities: entities.map(rowToEntity),
+      edges: edges.map(rowToEdge),
+      stateSlots: stateSlots.map(rowToStateSlot),
+      events: events.map((row) => PlayEventSchema.parse(row)),
+    };
   }
 
   transaction<T>(fn: () => T): T {

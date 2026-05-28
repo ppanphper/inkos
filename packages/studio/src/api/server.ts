@@ -38,6 +38,7 @@ import {
   buildExportArtifact,
   GLOBAL_ENV_PATH,
   COVER_PROVIDER_PRESETS,
+  createPlayDB,
   PlayRunner,
   PlayStore,
   Scheduler,
@@ -82,6 +83,8 @@ const TOOL_LABELS: Record<string, string> = {
   read: "读取文件", edit: "编辑文件", grep: "搜索", ls: "列目录",
   short_fiction_run: "短篇生产",
   generate_cover: "生成封面",
+  play_start: "启动互动世界",
+  play_step: "推进互动世界",
 };
 
 function resolveToolLabel(tool: string, agent?: string): string {
@@ -2308,6 +2311,13 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       },
     });
     const result = await runner.step(body.input);
+    const store = new PlayStore(root);
+    const db = createPlayDB(store.runDir(worldId, runId));
+    const [currentState, graph] = await Promise.all([
+      store.loadCurrentState(worldId, runId).catch(() => null),
+      Promise.resolve(db.snapshot()),
+    ]);
+    db.close?.();
     return c.json({
       worldId,
       runId,
@@ -2315,22 +2325,85 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
       suggestedActions: result.suggestedActions,
       action: result.action,
       mutation: result.mutation,
+      currentState,
+      graph,
     });
+  });
+
+  app.get("/api/v1/play/worlds", async (c) => {
+    const store = new PlayStore(root);
+    return c.json({ worlds: await store.listWorlds() });
+  });
+
+  app.post("/api/v1/play/worlds", async (c) => {
+    const body = await c.req.json<{
+      id?: unknown;
+      title?: unknown;
+      premise?: unknown;
+      mode?: unknown;
+      runId?: unknown;
+      initialScene?: unknown;
+    }>();
+    if (typeof body.title !== "string" || !body.title.trim()) {
+      throw new ApiError(400, "PLAY_WORLD_TITLE_REQUIRED", "title is required");
+    }
+    const title = body.title.trim();
+    const derivedId = deriveBookIdFromTitle(title) || `world-${Date.now().toString(36)}`;
+    const worldId = normalizeApiBookId(body.id ?? derivedId, "worldId") ?? derivedId;
+    const runId = normalizeApiBookId(body.runId ?? "main", "runId") ?? "main";
+    const mode = body.mode === "guided" ? "guided" : "open";
+    const premise = typeof body.premise === "string" ? body.premise.trim() : "";
+    const initialScene = typeof body.initialScene === "string" && body.initialScene.trim()
+      ? body.initialScene.trim()
+      : `${title} 已创建。${premise ? `\n\n${premise}` : ""}\n\n输入你的第一个动作开始。`;
+
+    const store = new PlayStore(root);
+    const world = await store.createWorld({ id: worldId, title, premise, mode });
+    await store.ensureRun(worldId, runId);
+    const transcript = await store.readTranscript(worldId, runId);
+    if (transcript.length === 0) {
+      await store.appendTranscriptTurn(worldId, runId, {
+        role: "assistant",
+        content: initialScene,
+        timestamp: Date.now(),
+      });
+      await store.writeProjection(worldId, runId, "projections/scene.md", `${initialScene}\n`);
+      await store.saveCurrentState(worldId, runId, {
+        turn: 0,
+        lastEventId: null,
+        lastSummary: initialScene,
+      });
+    }
+
+    return c.json({
+      world,
+      run: (await store.listRuns(worldId)).find((run) => run.id === runId) ?? { id: runId },
+    });
+  });
+
+  app.get("/api/v1/play/worlds/:worldId/runs", async (c) => {
+    const worldId = normalizeApiBookId(c.req.param("worldId"), "worldId") ?? "default-world";
+    const store = new PlayStore(root);
+    return c.json({ worldId, runs: await store.listRuns(worldId) });
   });
 
   app.get("/api/v1/play/runs/:worldId/:runId", async (c) => {
     const worldId = normalizeApiBookId(c.req.param("worldId"), "worldId") ?? "default-world";
     const runId = normalizeApiBookId(c.req.param("runId"), "runId") ?? "default-run";
     const store = new PlayStore(root);
+    const db = createPlayDB(store.runDir(worldId, runId));
     const [transcript, currentState] = await Promise.all([
       store.readTranscript(worldId, runId),
       store.loadCurrentState(worldId, runId).catch(() => null),
     ]);
+    const graph = db.snapshot();
+    db.close?.();
     return c.json({
       worldId,
       runId,
       transcript,
       currentState,
+      graph,
     });
   });
 
