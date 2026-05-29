@@ -29,6 +29,7 @@ import {
   ArrowUp,
   ChevronDown,
   Check,
+  Gamepad2,
 } from "lucide-react";
 import { Shimmer } from "../components/ai-elements/shimmer";
 import {
@@ -87,6 +88,7 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
   const createSession = useChatStore((s) => s.createSession);
   const loadSessionDetail = useChatStore((s) => s.loadSessionDetail);
   const activateSession = useChatStore((s) => s.activateSession);
+  const setSessionPlayMode = useChatStore((s) => s.setSessionPlayMode);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -95,8 +97,17 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
   const hasBook = Boolean(activeBookId);
   const currentSessionKind: ChatSessionKind = activeSession?.sessionKind
     ?? (mode === "book-create" ? "book-create" : activeBookId ? "book" : "chat");
-  const isGuidedPlay = currentSessionKind === "play" && activeSession?.playMode === "guided";
-  const playChoices = useMemo(() => (isGuidedPlay ? latestPlayChoices(messages) : []), [isGuidedPlay, messages]);
+  const playMode = activeSession?.playMode;
+  // A play session must pick its playstyle (点着玩 / 自由玩) before chatting.
+  const needsPlayModeChoice = currentSessionKind === "play" && !playMode;
+  // Even in 点着玩 the world is shaped by free typing first; the choice panel
+  // only replaces the input once play has actually started (a play tool
+  // produced choices).
+  const playChoices = useMemo(
+    () => (currentSessionKind === "play" && playMode === "guided" ? latestPlayChoices(messages) : []),
+    [currentSessionKind, playMode, messages],
+  );
+  const showChoicePanel = playMode === "guided" && playChoices.length > 0;
 
   // Derived: is the assistant currently streaming/thinking/executing tools?
   const isStreaming = useMemo(() => {
@@ -339,7 +350,34 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
         ref={scrollRef}
         className="chat-message-scroll flex-1 overflow-y-auto [scrollbar-gutter:stable] px-4 py-6"
       >
-        {messages.length === 0 && !loading ? (
+        {needsPlayModeChoice ? (
+          <div className="h-full flex flex-col items-center justify-center text-center select-none gap-4">
+            <div className="w-14 h-14 rounded-2xl border border-dashed border-border flex items-center justify-center bg-secondary/30 opacity-40">
+              <Gamepad2 size={24} className="text-muted-foreground" />
+            </div>
+            <p className="text-sm text-muted-foreground/70 max-w-md leading-7">
+              {isZh ? "选个玩法，进去再聊你想玩的世界。" : "Pick a playstyle, then describe the world you want in chat."}
+            </p>
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => { if (activeSessionId) setSessionPlayMode(activeSessionId, "guided"); }}
+                className="w-40 rounded-xl border border-border/50 bg-secondary/30 px-4 py-3 text-left transition-all hover:border-primary/40 hover:bg-primary/5"
+              >
+                <div className="text-sm font-medium text-foreground">{isZh ? "点着玩" : "Choices"}</div>
+                <div className="mt-1 text-xs leading-5 text-muted-foreground">{isZh ? "GM 给选项，点着推进" : "Pick from offered actions"}</div>
+              </button>
+              <button
+                type="button"
+                onClick={() => { if (activeSessionId) setSessionPlayMode(activeSessionId, "open"); }}
+                className="w-40 rounded-xl border border-border/50 bg-secondary/30 px-4 py-3 text-left transition-all hover:border-primary/40 hover:bg-primary/5"
+              >
+                <div className="text-sm font-medium text-foreground">{isZh ? "自由玩" : "Free"}</div>
+                <div className="mt-1 text-xs leading-5 text-muted-foreground">{isZh ? "自己打字，想干嘛干嘛" : "Type anything you want"}</div>
+              </button>
+            </div>
+          </div>
+        ) : messages.length === 0 && !loading ? (
           <div className="h-full flex flex-col items-center justify-center text-center select-none">
             <div className="w-14 h-14 rounded-2xl border border-dashed border-border flex items-center justify-center mb-4 bg-secondary/30 opacity-40">
               <BotMessageSquare size={24} className="text-muted-foreground" />
@@ -447,7 +485,7 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
       </div>
 
       {/* Quick actions (only when a book is active) */}
-      {hasBook && !isGuidedPlay && (
+      {hasBook && !showChoicePanel && (
         <div className="shrink-0 max-w-3xl mx-auto w-full px-4">
           <QuickActions
             onAction={handleQuickAction}
@@ -457,8 +495,8 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
         </div>
       )}
 
-      {/* Input area — guided play swaps the free-text input for a choice panel */}
-      {isGuidedPlay ? (
+      {/* Bottom: pick-playstyle hides input; started 点着玩 shows choices; else free-text input */}
+      {needsPlayModeChoice ? null : showChoicePanel ? (
         <PlayChoicePanel
           choices={playChoices}
           disabled={loading || !activeSessionId}

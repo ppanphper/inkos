@@ -24,6 +24,11 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
   activateSession: (sessionId) =>
     set({ activeSessionId: sessionId }),
 
+  setSessionPlayMode: (sessionId, playMode) =>
+    set((state) => ({
+      sessions: updateSession(state.sessions, sessionId, () => ({ playMode })),
+    })),
+
   setInput: (text) => set({ input: text }),
 
   addUserMessage: (sessionId, content) =>
