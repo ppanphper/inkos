@@ -99,12 +99,15 @@ function proposedActionSessionKind(action: ProposeActionParamsType["action"]): "
   return "short";
 }
 
-export function createProposeActionTool(language: "zh" | "en" = "zh"): AgentTool<typeof ProposeActionParams> {
+export function createProposeActionTool(
+  language: "zh" | "en" = "zh",
+  options: { readonly sameSession?: boolean } = {},
+): AgentTool<typeof ProposeActionParams> {
   return {
     name: "propose_action",
     description:
       "Ask the user to confirm a production action from general chat. " +
-      "Use this instead of directly creating books, generating shorts/covers, or starting play worlds in chat mode.",
+      "Use this before creating books, generating shorts/covers, or starting play worlds when the user has not clicked a confirmation.",
     label: "Confirm Action",
     parameters: ProposeActionParams,
     async execute(_toolCallId: string, params: ProposeActionParamsType): Promise<AgentToolResult<unknown>> {
@@ -132,6 +135,7 @@ export function createProposeActionTool(language: "zh" | "en" = "zh"): AgentTool
           kind: "proposed_action",
           action: params.action,
           targetSessionKind,
+          sameSession: options.sameSession === true,
           title,
           summary,
           instruction: params.instruction,

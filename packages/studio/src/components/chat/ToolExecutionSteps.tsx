@@ -112,6 +112,7 @@ export interface ProposedActionDetails {
   readonly kind: "proposed_action";
   readonly action: ChatRequestedIntent;
   readonly targetSessionKind: ChatSessionKind;
+  readonly sameSession?: boolean;
   readonly title?: string;
   readonly summary?: string;
   readonly instruction?: string;
@@ -120,6 +121,11 @@ export interface ProposedActionDetails {
 function stringField(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function booleanField(record: Record<string, unknown>, key: string): boolean | undefined {
+  const value = record[key];
+  return typeof value === "boolean" ? value : undefined;
 }
 
 export function getGeneratedArtifactDetails(exec: ToolExecution): GeneratedArtifactDetails | null {
@@ -203,6 +209,7 @@ export function getProposedActionDetails(exec: ToolExecution): ProposedActionDet
     kind: "proposed_action",
     action,
     targetSessionKind,
+    sameSession: booleanField(record, "sameSession"),
     title: stringField(record, "title"),
     summary: stringField(record, "summary"),
     instruction,

@@ -176,6 +176,7 @@ describe("groupChronologically", () => {
         kind: "proposed_action",
         action: "short_run",
         targetSessionKind: "short",
+        sameSession: true,
         title: "生成短篇",
         summary: "确认后生成完整短篇。",
         instruction: "写一篇婚姻反杀短篇",
@@ -186,6 +187,7 @@ describe("groupChronologically", () => {
       kind: "proposed_action",
       action: "short_run",
       targetSessionKind: "short",
+      sameSession: true,
       title: "生成短篇",
       instruction: "写一篇婚姻反杀短篇",
     });

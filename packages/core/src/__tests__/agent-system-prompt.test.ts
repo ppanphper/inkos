@@ -45,13 +45,15 @@ describe("buildAgentSystemPrompt", () => {
   });
 
   describe("book-create mode", () => {
-    it("contains only long-form creation instructions", () => {
+    it("gates long-form creation behind a confirmation proposal", () => {
       const prompt = buildAgentSystemPrompt(null, "zh", "book-create");
       expect(prompt).toContain("建书助手");
-      expect(prompt).toContain("当前入口只负责创建长篇");
-      expect(prompt).toContain("sub_agent");
-      expect(prompt).toContain("architect");
-      expect(prompt).toContain("title");
+      expect(prompt).toContain("确认是否创建");
+      expect(prompt).toContain("propose_action");
+      expect(prompt).toContain("create_book");
+      expect(prompt).not.toContain("sub_agent");
+      expect(prompt).not.toContain("architect");
+      expect(prompt).toContain("标题");
       expect(prompt).toContain("题材");
       expect(prompt).toContain("世界观");
       expect(prompt).toContain("主角");
@@ -62,50 +64,98 @@ describe("buildAgentSystemPrompt", () => {
       expect(prompt).not.toContain("play_step");
     });
 
-    it("English book-create mode is isolated from short and play", () => {
+    it("runs architect only after book creation is confirmed", () => {
+      const prompt = buildAgentSystemPrompt(null, "zh", "book-create", {
+        actionSource: "button",
+        requestedIntent: "create_book",
+      });
+      expect(prompt).toContain("sub_agent");
+      expect(prompt).toContain("architect");
+      expect(prompt).toContain("创建长篇");
+      expect(prompt).not.toContain("short_fiction_run");
+      expect(prompt).not.toContain("play_start");
+    });
+
+    it("English book-create mode is isolated from short and play before confirmation", () => {
       const prompt = buildAgentSystemPrompt(null, "en", "book-create");
       expect(prompt).toContain("book creation assistant");
-      expect(prompt).toContain("agent=\"architect\"");
+      expect(prompt).toContain("propose_action");
+      expect(prompt).not.toContain("agent=\"architect\"");
       expect(prompt).not.toContain("short_fiction_run");
-      expect(prompt).not.toContain("generate_cover");
       expect(prompt).not.toContain("play_start");
     });
   });
 
   describe("short mode", () => {
-    it("contains only short-fiction and cover tools", () => {
+    it("gates short-fiction and cover production behind a confirmation proposal", () => {
       const prompt = buildAgentSystemPrompt(null, "zh", "short");
       expect(prompt).toContain("InkOS Short 助手");
-      expect(prompt).toContain("short_fiction_run");
+      expect(prompt).toContain("propose_action");
+      expect(prompt).toContain("short_run");
       expect(prompt).toContain("generate_cover");
-      expect(prompt).toContain("输出到 shorts/");
+      expect(prompt).toContain("先确认方案");
+      expect(prompt).not.toContain("short_fiction_run");
       expect(prompt).not.toContain("sub_agent");
       expect(prompt).not.toContain("architect");
-      expect(prompt).not.toContain("play_start");
       expect(prompt).not.toContain("play_step");
     });
 
-    it("English short mode does not mention book-creation internals", () => {
+    it("runs short_fiction_run only after short production is confirmed", () => {
+      const prompt = buildAgentSystemPrompt(null, "zh", "short", {
+        actionSource: "button",
+        requestedIntent: "short_run",
+      });
+      expect(prompt).toContain("short_fiction_run");
+      expect(prompt).not.toContain("generate_cover：");
+      expect(prompt).not.toContain("sub_agent");
+      expect(prompt).not.toContain("play_start");
+    });
+
+    it("runs generate_cover only after cover generation is confirmed", () => {
+      const prompt = buildAgentSystemPrompt(null, "zh", "short", {
+        actionSource: "button",
+        requestedIntent: "generate_cover",
+      });
+      expect(prompt).toContain("generate_cover");
+      expect(prompt).toContain("不重跑正文");
+      expect(prompt).not.toContain("short_fiction_run");
+      expect(prompt).not.toContain("sub_agent");
+      expect(prompt).not.toContain("play_start");
+    });
+
+    it("English short mode does not mention book-creation internals before confirmation", () => {
       const prompt = buildAgentSystemPrompt(null, "en", "short");
       expect(prompt).toContain("InkOS Short assistant");
-      expect(prompt).toContain("short_fiction_run");
-      expect(prompt).toContain("generate_cover");
+      expect(prompt).toContain("propose_action");
+      expect(prompt).not.toContain("short_fiction_run");
       expect(prompt).not.toContain("sub_agent");
       expect(prompt).not.toContain("architect");
-      expect(prompt).not.toContain("play_start");
     });
   });
 
   describe("play mode", () => {
-    it("contains only play tools", () => {
+    it("gates new world start behind a confirmation proposal but keeps play_step", () => {
       const prompt = buildAgentSystemPrompt(null, "zh", "play");
       expect(prompt).toContain("InkOS Play 助手");
+      expect(prompt).toContain("propose_action");
       expect(prompt).toContain("play_start");
       expect(prompt).toContain("play_step");
       expect(prompt).not.toContain("short_fiction_run");
       expect(prompt).not.toContain("generate_cover");
       expect(prompt).not.toContain("sub_agent");
       expect(prompt).not.toContain("architect");
+    });
+
+    it("runs play_start only after world start is confirmed", () => {
+      const prompt = buildAgentSystemPrompt(null, "zh", "play", {
+        actionSource: "button",
+        requestedIntent: "play_start",
+      });
+      expect(prompt).toContain("play_start");
+      expect(prompt).not.toContain("play_step");
+      expect(prompt).not.toContain("propose_action");
+      expect(prompt).not.toContain("short_fiction_run");
+      expect(prompt).not.toContain("sub_agent");
     });
   });
 

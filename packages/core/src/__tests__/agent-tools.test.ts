@@ -147,6 +147,22 @@ describe("agent deterministic writing tools", () => {
     }
   });
 
+  it("marks in-surface confirmation proposals when requested", async () => {
+    const tool = createProposeActionTool("zh", { sameSession: true });
+
+    const result = await tool.execute("proposal-same-session", {
+      action: "short_run",
+      instruction: "写一篇婚姻反杀短篇",
+    });
+
+    expect(result.details).toMatchObject({
+      kind: "proposed_action",
+      action: "short_run",
+      targetSessionKind: "short",
+      sameSession: true,
+    });
+  });
+
   it("passes the explicit architect title straight into initBook", async () => {
     const pipeline = {
       initBook: vi.fn(async () => undefined),

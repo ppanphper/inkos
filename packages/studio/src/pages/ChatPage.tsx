@@ -310,6 +310,15 @@ export function ChatPage({ activeBookId, mode = activeBookId ? "book" : "book-cr
   };
 
   const handleProposedAction = async (details: ProposedActionDetails) => {
+    if (details.sameSession && activeSessionId) {
+      await sendMessage(activeSessionId, details.instruction ?? "", {
+        activeBookId,
+        sessionKind: details.targetSessionKind,
+        actionSource: "button",
+        requestedIntent: details.action,
+      });
+      return;
+    }
     const targetSessionId = await createSession(null, details.targetSessionKind);
     await sendMessage(targetSessionId, details.instruction ?? "", {
       sessionKind: details.targetSessionKind,

@@ -58,6 +58,17 @@ export interface AgentSessionConfig {
   sessionKind?: SessionKind;
   /** Play interaction mode chosen by the player at launch (guided = choice-only, open = free text). */
   playMode?: "open" | "guided";
+  /** Where this turn came from. Button/slash turns can execute confirmed production actions. */
+  actionSource?: "free-text" | "button" | "slash" | "quick-action";
+  /** Explicit user-confirmed action requested by the UI/command surface. */
+  requestedIntent?:
+    | "create_book"
+    | "write_next"
+    | "short_run"
+    | "play_start"
+    | "play_step"
+    | "generate_cover"
+    | "edit_artifact";
   /** Language for the system prompt. */
   language: string;
   /** PipelineRunner for sub-agent tool delegation. */
@@ -93,6 +104,8 @@ interface CachedAgent {
   projectRoot: string;
   bookId: string | null;
   sessionKind: SessionKind;
+  actionSource: NonNullable<AgentSessionConfig["actionSource"]>;
+  requestedIntent: AgentSessionConfig["requestedIntent"];
   language: string;
   modelIdentity: string;
   apiKey: string | undefined;
@@ -523,33 +536,52 @@ function createAgentToolsForMode(params: {
   readonly bookId: string | null;
   readonly sessionId: string;
   readonly sessionKind: SessionKind;
+  readonly actionSource: NonNullable<AgentSessionConfig["actionSource"]>;
+  readonly requestedIntent: AgentSessionConfig["requestedIntent"];
   readonly projectRoot: string;
   readonly allowSystemFileRead: boolean;
   readonly language: string;
   readonly playMode?: "open" | "guided";
 }) {
   const subAgentTool = createSubAgentTool(params.pipeline, params.bookId, params.projectRoot);
+  const lang = params.language === "en" ? "en" : "zh";
+  const proposalTool = createProposeActionTool(lang, { sameSession: params.sessionKind !== "chat" });
+  const isConfirmed = (
+    intent: NonNullable<AgentSessionConfig["requestedIntent"]>,
+  ): boolean => {
+    return (params.actionSource === "button" || params.actionSource === "slash")
+      && params.requestedIntent === intent;
+  };
 
   if (params.sessionKind === "chat") {
-    return [createProposeActionTool(params.language === "en" ? "en" : "zh")];
+    return [proposalTool];
   }
 
   if (params.sessionKind === "short") {
-    return [
-      createShortFictionRunTool(params.pipeline, params.projectRoot),
-      createGenerateCoverTool(params.projectRoot),
-    ];
+    if (isConfirmed("short_run")) {
+      return [createShortFictionRunTool(params.pipeline, params.projectRoot)];
+    }
+    if (isConfirmed("generate_cover")) {
+      return [createGenerateCoverTool(params.projectRoot)];
+    }
+    return [proposalTool];
   }
 
   if (params.sessionKind === "play") {
+    if (isConfirmed("play_start")) {
+      return [createPlayStartTool(params.projectRoot, params.sessionId, params.playMode)];
+    }
     return [
-      createPlayStartTool(params.projectRoot, params.sessionId, params.playMode),
+      proposalTool,
       createPlayStepTool(params.pipeline, params.projectRoot, params.sessionId),
     ];
   }
 
   if (params.sessionKind === "book-create" && !params.bookId) {
-    return [subAgentTool];
+    if (isConfirmed("create_book")) {
+      return [subAgentTool];
+    }
+    return [proposalTool];
   }
 
   if (!params.bookId) {
@@ -605,6 +637,8 @@ async function runAgentSessionUnlocked(
   const bookId: string | null = config.bookId ? assertSafeBookId(config.bookId) : null;
   const sessionKind: SessionKind = config.sessionKind ?? (bookId ? "book" : "chat");
   const playMode = config.playMode;
+  const actionSource = config.actionSource ?? "free-text";
+  const requestedIntent = config.requestedIntent;
   const model = resolveModel(config.model);
   const requestedModelIdentity = agentModelIdentity(model);
   const allowSystemFileRead = config.allowSystemFileRead ?? envFlagEnabled(process.env.INKOS_AGENT_ALLOW_SYSTEM_READ, false);
@@ -624,6 +658,8 @@ async function runAgentSessionUnlocked(
     const projectRootChanged = cached.projectRoot !== projectRoot;
     const bookChanged = cached.bookId !== bookId;
     const sessionKindChanged = cached.sessionKind !== sessionKind;
+    const actionSourceChanged = cached.actionSource !== actionSource;
+    const requestedIntentChanged = cached.requestedIntent !== requestedIntent;
     const languageChanged = cached.language !== language;
     const apiKeyChanged = cached.apiKey !== config.apiKey;
     const readPermissionChanged = cached.allowSystemFileRead !== allowSystemFileRead;
@@ -634,6 +670,8 @@ async function runAgentSessionUnlocked(
       projectRootChanged ||
       bookChanged ||
       sessionKindChanged ||
+      actionSourceChanged ||
+      requestedIntentChanged ||
       languageChanged ||
       apiKeyChanged ||
       readPermissionChanged ||
@@ -660,8 +698,19 @@ async function runAgentSessionUnlocked(
     const agent = new Agent({
       initialState: {
         model,
-        systemPrompt: buildAgentSystemPrompt(bookId, language, sessionKind),
-        tools: createAgentToolsForMode({ pipeline, bookId, sessionId, sessionKind, projectRoot, allowSystemFileRead, language, playMode }),
+        systemPrompt: buildAgentSystemPrompt(bookId, language, sessionKind, { actionSource, requestedIntent }),
+        tools: createAgentToolsForMode({
+          pipeline,
+          bookId,
+          sessionId,
+          sessionKind,
+          actionSource,
+          requestedIntent,
+          projectRoot,
+          allowSystemFileRead,
+          language,
+          playMode,
+        }),
         messages: initialAgentMessages,
       },
       transformContext: createBookContextTransform(bookId, projectRoot),
@@ -679,6 +728,8 @@ async function runAgentSessionUnlocked(
       projectRoot,
       bookId,
       sessionKind,
+      actionSource,
+      requestedIntent,
       language,
       modelIdentity: requestedModelIdentity,
       apiKey: config.apiKey,

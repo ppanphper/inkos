@@ -2883,6 +2883,8 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
           bookId: agentBookId,
           sessionKind,
           playMode,
+          actionSource,
+          requestedIntent,
           sessionId: bookSession.sessionId,
           language: config.language ?? "zh",
           onEvent: (event) => {
@@ -3049,7 +3051,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
             fallbackClient,
             reqModel ?? config.llm.model,
             [
-              { role: "system", content: buildAgentSystemPrompt(agentBookId, config.language ?? "zh", sessionKind) },
+              { role: "system", content: buildAgentSystemPrompt(agentBookId, config.language ?? "zh", sessionKind, { actionSource, requestedIntent }) },
               { role: "user", content: instruction },
             ],
             { maxTokens: 256 },

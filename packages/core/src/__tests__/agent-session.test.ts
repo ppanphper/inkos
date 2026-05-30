@@ -177,6 +177,13 @@ describe("runAgentSession cache — bookId switch", () => {
     evictAgentCache("s-project-root-cache");
     evictAgentCache("s-interleave-seq");
     evictAgentCache("s-context-window");
+    evictAgentCache("book-create-session");
+    evictAgentCache("book-create-confirmed-session");
+    evictAgentCache("short-session");
+    evictAgentCache("short-confirmed-session");
+    evictAgentCache("cover-confirmed-session");
+    evictAgentCache("play-session");
+    evictAgentCache("play-confirmed-session");
     await rm(projectRoot, { recursive: true, force: true });
     if (otherProjectRoot) await rm(otherProjectRoot, { recursive: true, force: true });
   });
@@ -507,7 +514,7 @@ describe("runAgentSession cache — bookId switch", () => {
     ]);
   });
 
-  it("registers only architect delegation in book-create mode", async () => {
+  it("gates book creation behind an in-session confirmation proposal", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
     const pipeline = {} as any;
 
@@ -517,11 +524,35 @@ describe("runAgentSession cache — bookId switch", () => {
     );
 
     expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual([
+      "propose_action",
+    ]);
+  });
+
+  it("exposes architect delegation after book-create confirmation", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {} as any;
+
+    await runAgentSession(
+      {
+        sessionId: "book-create-confirmed-session",
+        bookId: null,
+        sessionKind: "book-create",
+        actionSource: "button",
+        requestedIntent: "create_book",
+        language: "zh",
+        pipeline,
+        projectRoot,
+        model,
+      },
+      "确认创建这本都市悬疑长篇",
+    );
+
+    expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual([
       "sub_agent",
     ]);
   });
 
-  it("narrows tools in short and play modes", async () => {
+  it("gates short and play production behind in-session confirmation proposals", async () => {
     const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
     const pipeline = {} as any;
 
@@ -530,8 +561,7 @@ describe("runAgentSession cache — bookId switch", () => {
       "hi",
     );
     expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual([
-      "short_fiction_run",
-      "generate_cover",
+      "propose_action",
     ]);
 
     await runAgentSession(
@@ -539,8 +569,72 @@ describe("runAgentSession cache — bookId switch", () => {
       "hi",
     );
     expect(agentInstances[1].state.tools.map((tool: any) => tool.name)).toEqual([
-      "play_start",
+      "propose_action",
       "play_step",
+    ]);
+  });
+
+  it("exposes short production tools only after matching confirmation", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {} as any;
+
+    await runAgentSession(
+      {
+        sessionId: "short-confirmed-session",
+        bookId: null,
+        sessionKind: "short",
+        actionSource: "button",
+        requestedIntent: "short_run",
+        language: "zh",
+        pipeline,
+        projectRoot,
+        model,
+      },
+      "确认生成婚姻反杀短篇",
+    );
+    expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual([
+      "short_fiction_run",
+    ]);
+
+    await runAgentSession(
+      {
+        sessionId: "cover-confirmed-session",
+        bookId: null,
+        sessionKind: "short",
+        actionSource: "button",
+        requestedIntent: "generate_cover",
+        language: "zh",
+        pipeline,
+        projectRoot,
+        model,
+      },
+      "确认生成封面",
+    );
+    expect(agentInstances[1].state.tools.map((tool: any) => tool.name)).toEqual([
+      "generate_cover",
+    ]);
+  });
+
+  it("exposes play_start only after play-start confirmation", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {} as any;
+
+    await runAgentSession(
+      {
+        sessionId: "play-confirmed-session",
+        bookId: null,
+        sessionKind: "play",
+        actionSource: "button",
+        requestedIntent: "play_start",
+        language: "zh",
+        pipeline,
+        projectRoot,
+        model,
+      },
+      "确认启动雨夜茶馆互动世界",
+    );
+    expect(agentInstances[0].state.tools.map((tool: any) => tool.name)).toEqual([
+      "play_start",
     ]);
   });
 
