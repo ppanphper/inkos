@@ -465,6 +465,40 @@ function isTransientLLMTransportError(error: unknown): boolean {
   ].some((needle) => text.includes(needle));
 }
 
+/**
+ * Transient *HTTP-level* upstream failures worth retrying: 429 (rate limit),
+ * 502/503/504 (gateway / temporarily unavailable / overloaded). These are the
+ * aggregator blips that previously aborted whole architect/writer/short runs
+ * because only transport-level errors were retried.
+ *
+ * Deliberately does NOT match a bare 500 / "MODEL_NOT_AVAILABLE": on providers
+ * like PPIO a 500 means the model isn't on inference at all — retrying is futile
+ * and just delays the real error.
+ */
+export function isTransientLLMHttpError(error: unknown): boolean {
+  const text = collectErrorText(error).toLowerCase();
+  if (text.includes("model_not_available") || text.includes("model not available")) {
+    return false;
+  }
+  const statusHit = /\b(429|502|503|504)\b/.test(text);
+  const phraseHit = [
+    "temporarily unavailable",
+    "service unavailable",
+    "bad gateway",
+    "gateway timeout",
+    "too many requests",
+    "rate limit",
+    "overloaded",
+    "please retry",
+    "try again later",
+  ].some((needle) => text.includes(needle));
+  return statusHit || phraseHit;
+}
+
+function isRetryableLLMError(error: unknown): boolean {
+  return isTransientLLMTransportError(error) || isTransientLLMHttpError(error);
+}
+
 async function withTransientLLMRetry<T>(
   run: () => Promise<T>,
   options?: { readonly enabled?: boolean },
@@ -480,10 +514,13 @@ async function withTransientLLMRetry<T>(
         !enabled
         || attempt >= TRANSIENT_LLM_RETRIES
         || error instanceof PartialResponseError
-        || !isTransientLLMTransportError(error)
+        || !isRetryableLLMError(error)
       ) {
         throw error;
       }
+      // Back off before retrying — immediate re-fire on a 429/503 just makes it
+      // worse. Linear is enough for a 2-retry budget (~0.8s, ~1.6s).
+      await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
     }
   }
   throw lastError;
