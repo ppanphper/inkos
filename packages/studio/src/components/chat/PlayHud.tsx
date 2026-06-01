@@ -55,6 +55,7 @@ interface PlayRunResponse {
 }
 interface CoverConfigResponse {
   readonly service?: string | null;
+  readonly configured?: boolean;
   readonly providers?: ReadonlyArray<{ readonly service: string; readonly connected?: boolean }>;
 }
 
@@ -214,8 +215,12 @@ export function PlayHud(props: {
   useEffect(() => {
     fetchJson<CoverConfigResponse>("/cover/config")
       .then((cfg) => {
+        // Prefer the server's explicit `configured` (covers the env path too);
+        // fall back to "a selected service is connected" for older servers.
         const selected = cfg.service ?? null;
-        setCoverReady(!!selected && (cfg.providers ?? []).some((p) => p.service === selected && p.connected));
+        setCoverReady(
+          cfg.configured ?? (!!selected && (cfg.providers ?? []).some((p) => p.service === selected && p.connected)),
+        );
       })
       .catch(() => setCoverReady(false));
   }, []);

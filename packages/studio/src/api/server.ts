@@ -1998,16 +1998,27 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
     const llm = (config.llm as Record<string, unknown> | undefined) ?? {};
     const cover = normalizeCoverConfig(llm.cover);
     const secrets = await loadSecrets(root);
+    const keyFor = (service: string): boolean =>
+      Boolean(secrets.services[coverSecretKey(service)]?.apiKey || secrets.services[service]?.apiKey);
+    // "Configured" = a cover service is selected AND has a key, OR a cover
+    // endpoint is provided via env (the CLI/power-user path). This is the gate
+    // for the Play auto-illustration toggles.
+    const envConfigured = Boolean(
+      (process.env.INKOS_COVER_BASE_URL || process.env.INKOS_COVER_ENDPOINT)
+      && (process.env.INKOS_COVER_API_KEY || keyFor("kkaiapi")),
+    );
+    const configured = Boolean(cover?.service && keyFor(cover.service)) || envConfigured;
     return c.json({
       service: cover?.service ?? null,
       model: cover?.model ?? null,
+      configured,
       providers: COVER_PROVIDER_PRESETS.map((provider) => ({
         service: provider.service,
         label: provider.label,
         baseUrl: provider.baseUrl,
         defaultModel: provider.defaultModel,
         models: provider.models,
-        connected: Boolean(secrets.services[coverSecretKey(provider.service)]?.apiKey || secrets.services[provider.service]?.apiKey),
+        connected: keyFor(provider.service),
       })),
     });
   });
