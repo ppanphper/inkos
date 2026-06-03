@@ -42,6 +42,7 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
+  GitBranch,
 } from "lucide-react";
 import { InkosLogo } from "./InkosLogo";
 
@@ -103,6 +104,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
   const [deleteTarget, setDeleteTarget] = useState<{ sessionId: string; title: string } | null>(null);
   const [expandedBooks, setExpandedBooks] = useState<Set<string>>(new Set());
   const [projectChatExpanded, setProjectChatExpanded] = useState(true);
+  const [myBooksExpanded, setMyBooksExpanded] = useState(true);
 
   const books = data?.books ?? [];
   const projectChatKey = "__null__";
@@ -226,10 +228,11 @@ export function Sidebar({ nav, activePage, sse, t }: {
     nav.toBookCreate();
   };
 
-  const launchProjectMode = (kind: "short" | "play") => {
+  const launchProjectMode = (kind: "short" | "play", playMode?: "guided" | "open") => {
     setProjectChatExpanded(true);
-    // Play mode (点着玩 / 自由玩) is chosen inside the chat, not here.
-    const sessionId = createDraftSession(null, kind);
+    // Play mode (分支互动 = guided / 自由互动 = open) is now decided here at the
+    // launcher, not via an in-chat button.
+    const sessionId = createDraftSession(null, kind, playMode);
     setProjectChatSessionId(sessionId);
     setInput("");
     nav.toChat();
@@ -268,80 +271,30 @@ export function Sidebar({ nav, activePage, sse, t }: {
 
       {/* Main Navigation */}
       <div className="flex-1 overflow-y-auto px-4 py-2 space-y-6">
-        {/* Books Section */}
+        {/* InkOS Create Section — always visible, two columns × four rows */}
         <div>
-          <div className="px-3 mb-3">
+          <div className="px-3 mb-2">
             <span className="text-[11px] uppercase tracking-widest text-muted-foreground font-bold">
-              创作
+              {t("nav.createSection")}
             </span>
           </div>
-
-          <div className="mb-4 space-y-1">
-            <button
-              type="button"
-              onClick={handleOpenBookCreate}
-              className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-all ${
-                activePage === "book-create"
-                  ? "border border-border bg-secondary text-foreground font-medium shadow-sm"
-                  : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
-              }`}
-            >
-              <BookPlus size={16} className={activePage === "book-create" ? "text-primary" : "text-muted-foreground"} />
-              <span className="flex-1">{t("nav.createNovel")}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => launchProjectMode("short")}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-all hover:bg-secondary/50 hover:text-foreground"
-            >
-              <ScrollText size={16} className="text-muted-foreground" />
-              <span className="flex-1">{t("nav.createShort")}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => launchProjectMode("play")}
-              className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm text-muted-foreground transition-all hover:bg-secondary/50 hover:text-foreground"
-            >
-              <Gamepad2 size={16} className="text-muted-foreground" />
-              <span className="flex-1">{t("nav.createPlay")}</span>
-            </button>
-            <div className="grid grid-cols-2 gap-1 pt-1">
-              <button
-                type="button"
-                onClick={() => nav.toImport("fanfic")}
-                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-all hover:bg-secondary/50 hover:text-foreground"
-              >
-                <Feather size={14} />
-                <span>{t("nav.createFanfic")}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => nav.toImport("chapters")}
-                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-all hover:bg-secondary/50 hover:text-foreground"
-              >
-                <FileInput size={14} />
-                <span>{t("nav.createContinuation")}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => nav.toImport("canon")}
-                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-all hover:bg-secondary/50 hover:text-foreground"
-              >
-                <BookCopy size={14} />
-                <span>{t("nav.createSpinoff")}</span>
-              </button>
-              <button
-                type="button"
-                onClick={nav.toStyle}
-                className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-muted-foreground transition-all hover:bg-secondary/50 hover:text-foreground"
-              >
-                <Wand2 size={14} />
-                <span>{t("nav.createImitation")}</span>
-              </button>
-            </div>
+          <div className="grid grid-cols-2 gap-1">
+            <CreateItem icon={<BookPlus size={14} />} label={t("nav.createNovel")} active={activePage === "book-create"} onClick={handleOpenBookCreate} />
+            <CreateItem icon={<ScrollText size={14} />} label={t("nav.createShort")} onClick={() => launchProjectMode("short")} />
+            <CreateItem icon={<Feather size={14} />} label={t("nav.createFanfic")} onClick={() => nav.toImport("fanfic")} />
+            <CreateItem icon={<BookCopy size={14} />} label={t("nav.createSpinoff")} onClick={() => nav.toImport("canon")} />
+            <CreateItem icon={<Wand2 size={14} />} label={t("nav.createImitation")} onClick={nav.toStyle} />
+            <CreateItem icon={<FileInput size={14} />} label={t("nav.createContinuation")} onClick={() => nav.toImport("chapters")} />
+            <CreateItem icon={<GitBranch size={14} />} label={t("nav.createBranching")} onClick={() => launchProjectMode("play", "guided")} />
+            <CreateItem icon={<Gamepad2 size={14} />} label={t("nav.createFree")} onClick={() => launchProjectMode("play", "open")} />
           </div>
+        </div>
 
-          <div className="space-y-0.5">
+        {/* My Bookshelf Section */}
+        <div>
+          <SectionHeader label={t("nav.myBooks")} expanded={myBooksExpanded} onToggle={() => setMyBooksExpanded((v) => !v)} />
+          <Collapse open={myBooksExpanded}>
+          <div className="space-y-0.5 pt-1">
             {books.map((book) => {
               const bookSessions = sessionsByBook[book.id] ?? [];
               const isActiveBook = activePage === `book:${book.id}`;
@@ -367,7 +320,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                   </div>
 
                   {/* 展开后才显示 session 列表 + 新建按钮 */}
-                  {isExpanded && (
+                  <Collapse open={isExpanded}>
                     <div className="mt-0.5">
                       {bookSessions.map((session) => {
                         const isActiveSession = isActiveBook && activeSessionId === session.sessionId;
@@ -430,7 +383,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                         <span>新建会话</span>
                       </button>
                     </div>
-                  )}
+                  </Collapse>
                 </div>
               );
             })}
@@ -441,39 +394,29 @@ export function Sidebar({ nav, activePage, sse, t }: {
               </div>
             )}
           </div>
+          </Collapse>
         </div>
 
-        {/* History Section */}
+        {/* Sessions Section */}
         <div>
+          <SectionHeader
+            label={t("nav.history")}
+            expanded={projectChatExpanded}
+            onToggle={() => {
+              const next = !projectChatExpanded;
+              setProjectChatExpanded(next);
+              if (next) {
+                nav.toChat();
+                if (sessionIdsByBook[projectChatKey] === undefined) {
+                  void loadSessionList(null);
+                }
+              }
+            }}
+          />
           <div className="space-y-1">
             <div>
-              <div className="group/chat flex items-center">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setProjectChatExpanded((prev) => !prev);
-                    nav.toChat();
-                    if (sessionIdsByBook[projectChatKey] === undefined) {
-                      void loadSessionList(null);
-                    }
-                  }}
-                  className={`flex min-w-0 flex-1 items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-200 ${
-                    activePage === "chat"
-                      ? "bg-secondary text-foreground font-medium shadow-sm border border-border"
-                      : "text-foreground font-medium hover:text-foreground hover:bg-secondary/50"
-                  }`}
-                >
-                  <MessageSquare size={16} className={activePage === "chat" ? "text-primary" : "text-muted-foreground group-hover/chat:text-foreground"} />
-                  <span className="flex-1 text-left">{t("nav.history")}</span>
-                  <ChevronRight
-                    size={13}
-                    className={`text-muted-foreground/60 transition-transform ${projectChatExpanded ? "rotate-90" : ""}`}
-                  />
-                </button>
-              </div>
-
-              {projectChatExpanded && (
-                <div className="mt-0.5">
+              <Collapse open={projectChatExpanded}>
+                <div className="pt-1">
                   {projectChatSessions.map((session) => {
                     const isActiveSession = activePage === "chat" && activeSessionId === session.sessionId;
                     const label = getSessionLabel(session);
@@ -485,7 +428,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
                         <button
                           type="button"
                           onClick={() => openProjectChatSession(session.sessionId)}
-                          className="flex min-w-0 flex-1 items-center gap-2 pl-9 pr-2 py-1 text-left text-[13px] transition-colors"
+                          className="flex min-w-0 flex-1 items-center gap-2 pl-2 pr-2 py-1 text-left text-[13px] transition-colors"
                         >
                           <SessionKindIcon
                             kind={session.sessionKind}
@@ -533,13 +476,13 @@ export function Sidebar({ nav, activePage, sse, t }: {
                   <button
                     type="button"
                     onClick={handleCreateProjectChatSession}
-                    className="w-full flex items-center gap-2 pl-9 pr-2 py-1 text-xs text-muted-foreground/50 hover:text-foreground transition-colors"
+                    className="w-full flex items-center gap-2 pl-2 pr-2 py-1 text-xs text-muted-foreground/50 hover:text-foreground transition-colors"
                   >
                     <Plus size={12} />
                     <span>新建会话</span>
                   </button>
                 </div>
-              )}
+              </Collapse>
             </div>
           </div>
         </div>
@@ -727,6 +670,59 @@ function formatRelativeTime(sessionId: string): string {
   if (days < 30) return `${days} 天`;
   const months = Math.floor(days / 30);
   return `${months} 个月`;
+}
+
+// Smooth collapse via grid-template-rows 0fr→1fr (content-height-agnostic, no JS measuring).
+function Collapse({ open, children }: { open: boolean; children: React.ReactNode }) {
+  return (
+    <div className={`grid transition-[grid-template-rows] duration-200 ease-out ${open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+      <div className="overflow-hidden">{children}</div>
+    </div>
+  );
+}
+
+function SectionHeader({ label, expanded, onToggle }: {
+  label: string;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="group flex w-full items-center gap-1.5 px-3 py-1 text-left"
+    >
+      <span className="flex-1 text-[11px] uppercase tracking-widest text-muted-foreground font-bold group-hover:text-foreground transition-colors">
+        {label}
+      </span>
+      <ChevronRight
+        size={12}
+        className={`text-muted-foreground/50 transition-transform duration-200 ${expanded ? "rotate-90" : ""}`}
+      />
+    </button>
+  );
+}
+
+function CreateItem({ icon, label, active, onClick }: {
+  icon: React.ReactNode;
+  label: string;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex min-w-0 items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition-all ${
+        active
+          ? "border border-border bg-secondary text-foreground font-medium shadow-sm"
+          : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"
+      }`}
+    >
+      <span className={`shrink-0 ${active ? "text-primary" : ""}`}>{icon}</span>
+      <span className="truncate">{label}</span>
+    </button>
+  );
 }
 
 function SidebarItem({ label, icon, active, onClick, badge, badgeColor }: {
