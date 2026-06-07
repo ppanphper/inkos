@@ -82,6 +82,17 @@ export function normalizePlayMode(value: unknown): PlayMode | undefined {
   return PlayModeSchema.parse(value);
 }
 
+const INCOMPLETE_PLAY_SCENE_SUFFIX =
+  /(?:叫|是|为|在|向|把|将|和|与|或|但|却|因为|如果|当|等|、|，|：|；|——|“|‘|《|（|\()$/u;
+
+export function isUsablePlayInitialScene(value: string | undefined): boolean {
+  const text = value?.trim();
+  if (!text) return false;
+  if (text.length < 12) return false;
+  if (INCOMPLETE_PLAY_SCENE_SUFFIX.test(text)) return false;
+  return true;
+}
+
 export function isWriteNextInstruction(
   instruction: string,
   options: { readonly allowSlashWrite?: boolean } = {},
@@ -91,4 +102,15 @@ export function isWriteNextInstruction(
     ? /^(\/write|continue|继续|继续写|写下一章|write next|下一章|再来一章)$/i
     : /^(continue|继续|继续写|写下一章|write next|下一章|再来一章)$/i;
   return pattern.test(trimmed);
+}
+
+export function isExplicitWriteChapterCommand(instruction: string): boolean {
+  const trimmed = instruction.trim();
+  if (!trimmed) return false;
+
+  const zhWriteChapter =
+    /^(?:请|帮我|麻烦|现在|直接|开始|继续|接着|再)?\s*(?:写|续写|创作|生成)(?:出|一下)?\s*(?:第?\s*[一二三四五六七八九十百千万\d]+\s*章|下一章|一章|正文|章节)(?:\s|[，。,.！!？?；;：:]|$)/.test(trimmed);
+  if (zhWriteChapter) return true;
+
+  return /^(?:please\s+)?(?:write|continue|draft|generate)\s+(?:the\s+)?(?:next\s+)?chapter(?:\s+\d+|\s+one)?\b/i.test(trimmed);
 }

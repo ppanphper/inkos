@@ -55,6 +55,8 @@ import {
   coverSecretKey,
   resolveCoverProviderPreset,
   SessionKindSchema,
+  isExplicitWriteChapterCommand,
+  isUsablePlayInitialScene,
   isWriteNextInstruction,
   normalizeActionSource as normalizeCoreActionSource,
   normalizeActionPayload as normalizeCoreActionPayload,
@@ -332,7 +334,7 @@ function shouldRunDirectWriteNext(args: {
 }): boolean {
   if (!args.agentBookId || args.sessionKind !== "book") return false;
   if (args.requestedIntent === "write_next") return true;
-  if (args.actionSource === "free-text") return false;
+  if (args.actionSource === "free-text") return isExplicitWriteChapterCommand(args.instruction);
   return isWriteNextInstruction(args.instruction);
 }
 
@@ -745,12 +747,26 @@ async function executeConfirmedProductionAction(args: {
   } else if (args.requestedIntent === "play_start") {
     const payload = actionPayload?.playStart;
     const title = requirePayloadText(payload?.title, "确认启动互动世界缺少标题，请重新生成确认卡。");
-    tool = createPlayStartTool(args.pipeline, args.root, args.sessionId, args.playMode, { actionPayload });
+    const fallbackScene = [payload?.premise, args.instruction].filter((part): part is string => typeof part === "string" && part.trim().length > 0).join("\n\n");
+    const initialScene = isUsablePlayInitialScene(payload?.initialScene)
+      ? payload?.initialScene?.trim()
+      : fallbackScene.trim();
+    const confirmedActionPayload: ActionPayload | undefined = actionPayload
+      ? {
+        ...actionPayload,
+        playStart: {
+          ...payload,
+          title,
+          ...(initialScene ? { initialScene } : {}),
+        },
+      }
+      : undefined;
+    tool = createPlayStartTool(args.pipeline, args.root, args.sessionId, args.playMode, { actionPayload: confirmedActionPayload });
     params = {
       title,
       ...(payload?.premise ? { premise: payload.premise } : {}),
       ...(payload?.mode ? { mode: payload.mode } : {}),
-      ...(payload?.initialScene ? { initialScene: payload.initialScene } : {}),
+      ...(initialScene ? { initialScene } : {}),
       ...(payload?.suggestedActions ? { suggestedActions: payload.suggestedActions } : {}),
     };
   } else {

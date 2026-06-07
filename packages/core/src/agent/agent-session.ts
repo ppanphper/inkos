@@ -240,17 +240,22 @@ function localAssistantStopStream(model: Model<Api>): AssistantMessageEventStrea
   return stream;
 }
 
+function isTerminalProductionToolName(toolName: unknown): boolean {
+  return toolName === "propose_action"
+    || toolName === "sub_agent"
+    || toolName === "short_fiction_run"
+    || toolName === "generate_cover"
+    || toolName === "play_start"
+    || toolName === "play_step";
+}
+
 function isTerminalToolResultTail(messages: AgentMessage[]): boolean {
   const last = messages.at(-1);
   if (!last || typeof last !== "object" || !("role" in last)) return false;
   if ((last as { role?: unknown }).role !== "toolResult") return false;
   const toolName = (last as { toolName?: unknown }).toolName;
   const isError = (last as { isError?: unknown }).isError;
-  return (
-    toolName === "propose_action"
-    || toolName === "play_start"
-    || toolName === "play_step"
-  ) && isError !== true;
+  return isTerminalProductionToolName(toolName) && isError !== true;
 }
 
 async function runInAgentSessionQueue<T>(
@@ -373,6 +378,24 @@ function extractTextFromAssistant(msg: AssistantMessage): string {
     .filter((c): c is { type: "text"; text: string } => c.type === "text")
     .map((c) => c.text)
     .join("");
+}
+
+function looksLikeUnsavedChapterProse(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 800) return false;
+  return /(^|\n)\s{0,3}#{1,3}\s*(?:第\s*[0-9一二三四五六七八九十百千]+\s*章|Chapter\s+\d+)/i.test(trimmed);
+}
+
+function bookRawChapterBoundaryText(language: string): string {
+  return language === "zh"
+    ? "这次模型输出了章节正文样式的聊天文本，但没有落盘。写下一章必须调用 sub_agent(agent=\"writer\")，由写作管线生成并保存章节。请重新发送“继续写下一章”，系统会走 writer 工具。"
+    : "The model produced chapter-like prose in chat, but nothing was saved. Writing the next chapter must call sub_agent(agent=\"writer\") so the writing pipeline generates and persists it. Please ask to continue again and the system will use the writer tool.";
+}
+
+function replaceAssistantText(message: AssistantMessage, text: string): void {
+  message.content = [{ type: "text", text }];
+  message.stopReason = "stop";
+  delete message.errorMessage;
 }
 
 function lastAssistantMessage(messages: AgentMessage[]): AssistantMessage | undefined {
@@ -849,6 +872,7 @@ async function runAgentSessionUnlocked(
   let parentUuid: string | null = null;
   let piTurnIndex = 0;
   let lastAssistantUuid: string | null = null;
+  let successfulProductionToolResultSeen = false;
 
   const persistAgentEvent = async (event: AgentEvent): Promise<void> => {
     if (event.type === "turn_start") {
@@ -859,6 +883,21 @@ async function runAgentSessionUnlocked(
 
     const role = transcriptRoleForMessage(event.message);
     if (!role) return;
+
+    if (role === "toolResult") {
+      const toolName = (event.message as { toolName?: unknown }).toolName;
+      const isError = (event.message as { isError?: unknown }).isError;
+      if (isTerminalProductionToolName(toolName) && isError !== true) {
+        successfulProductionToolResultSeen = true;
+      }
+    }
+
+    if (role === "assistant" && sessionKind === "book" && !successfulProductionToolResultSeen) {
+      const assistant = event.message as AssistantMessage;
+      if (looksLikeUnsavedChapterProse(extractTextFromAssistant(assistant))) {
+        replaceAssistantText(assistant, bookRawChapterBoundaryText(language));
+      }
+    }
 
     const uuid = randomUUID();
     const isToolResult = role === "toolResult";

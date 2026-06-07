@@ -239,6 +239,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     normalizePlatformOrOther: actual.normalizePlatformOrOther,
     defaultChapterLength: actual.defaultChapterLength,
     inferLanguage: actual.inferLanguage,
+    isUsablePlayInitialScene: actual.isUsablePlayInitialScene,
     chatCompletion: chatCompletionMock,
     loadProjectConfig: loadProjectConfigMock,
     processProjectInteractionRequest: processProjectInteractionRequestMock,
@@ -296,6 +297,7 @@ vi.mock("@actalk/inkos-core", async (importOriginal) => {
     SessionKindSchema: actual.SessionKindSchema,
     DetectionConfigSchema: actual.DetectionConfigSchema,
     InputGovernanceModeSchema: actual.InputGovernanceModeSchema,
+    isExplicitWriteChapterCommand: actual.isExplicitWriteChapterCommand,
     isWriteNextInstruction: actual.isWriteNextInstruction,
     normalizeActionSource: actual.normalizeActionSource,
     normalizeActionPayload: actual.normalizeActionPayload,
@@ -2677,6 +2679,52 @@ describe("createStudioServer daemon lifecycle", () => {
     expect(world).toMatchObject({ title: "旧档案馆之夜", mode: "open" });
   });
 
+  it("falls back from a truncated confirmed play-start scene to the complete user instruction", async () => {
+    const playSession = {
+      sessionId: "play-session-truncated",
+      bookId: null,
+      sessionKind: "play",
+      playMode: "open",
+      title: null,
+      messages: [],
+      events: [],
+      draftRounds: [],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    loadBookSessionMock.mockResolvedValueOnce(playSession).mockResolvedValueOnce(playSession);
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "确认启动旧戏院夜巡。初始场景：我站在配电室门口，手电照到泛黄演出表，主演栏写着赵铁生。",
+        sessionId: "play-session-truncated",
+        sessionKind: "play",
+        actionSource: "button",
+        requestedIntent: "play_start",
+        actionPayload: {
+          playStart: {
+            title: "旧戏院夜巡",
+            premise: "我在县城旧戏院做夜间检修，停电后舞台下传来拍板声。",
+            mode: "open",
+            initialScene: "剧目是《挑滑车》，主演栏里有个名字叫",
+            suggestedActions: ["检查演出表"],
+          },
+        },
+      }),
+    });
+
+    const body = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body.response).toContain("主演栏写着赵铁生");
+    expect(body.response).not.toContain("主演栏里有个名字叫");
+    await expect(readFile(join(root, "worlds", "play-session-truncated", "runs", "main", "projections", "scene.md"), "utf-8"))
+      .resolves.toContain("主演栏写着赵铁生");
+  });
+
   it("routes write-next button instructions directly to the shared writer pipeline", async () => {
     const { createStudioServer } = await import("./server.js");
     const app = createStudioServer(cloneProjectConfig() as never, root);
@@ -2694,8 +2742,9 @@ describe("createStudioServer daemon lifecycle", () => {
       }),
     });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const body = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body).toMatchObject({
       response: expect.stringContaining("已为 demo-book 完成第 3 章"),
       session: {
         sessionId: "agent-session-1",
@@ -2803,6 +2852,35 @@ describe("createStudioServer daemon lifecycle", () => {
       "继续",
     );
   });
+
+  it("direct-runs explicit free-text chapter writing commands for the active book", async () => {
+    const { createStudioServer } = await import("./server.js");
+    const app = createStudioServer(cloneProjectConfig() as never, root);
+
+    const response = await app.request("http://localhost/api/v1/agent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        instruction: "开始写第一章。写完后落盘，不要只在聊天里给我正文。",
+        activeBookId: "demo-book",
+        sessionId: "agent-session-1",
+        sessionKind: "book",
+        actionSource: "free-text",
+      }),
+    });
+
+    const body = await response.json();
+    expect(response.status, JSON.stringify(body)).toBe(200);
+    expect(body).toMatchObject({
+      response: expect.stringContaining("已为 demo-book 完成第 3 章"),
+      session: {
+        sessionId: "agent-session-1",
+        activeBookId: "demo-book",
+      },
+    });
+    expect(writeNextChapterMock).toHaveBeenCalledWith("demo-book");
+    expect(runAgentSessionMock).not.toHaveBeenCalled();
+  }, 10_000);
 
   it("forwards playMode to runAgentSession for play sessions", async () => {
     const { createStudioServer } = await import("./server.js");

@@ -18,7 +18,7 @@ import { createPlayDB, type PlayGraphDB } from "../play/play-db-factory.js";
 import { PlayRunner, type PlayOpeningSeedResult, type PlayStepResult } from "../play/play-runner.js";
 import { PlayStore } from "../play/play-store.js";
 import type { AgentContext } from "../agents/base.js";
-import { ActionPayloadSchema, type ActionPayload } from "../interaction/action-envelope.js";
+import { ActionPayloadSchema, isUsablePlayInitialScene, type ActionPayload } from "../interaction/action-envelope.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -271,7 +271,7 @@ function compactPlayStartPayload(value: ProposeActionParamsType["playStart"]): N
   if (premise) out.premise = premise;
   if (value.mode) out.mode = value.mode;
   const initialScene = value.initialScene?.trim();
-  if (initialScene) out.initialScene = initialScene;
+  if (isUsablePlayInitialScene(initialScene)) out.initialScene = initialScene;
   const suggestedActions = normalizeSuggestedActions(value.suggestedActions);
   if (suggestedActions.length > 0) out.suggestedActions = suggestedActions;
   return Object.keys(out).length > 0 ? out : undefined;
@@ -901,7 +901,9 @@ export function createPlayStartTool(
       const runId = "main";
       const title = playPayload?.title ?? params.title;
       const premise = playPayload?.premise ?? params.premise;
-      const initialScene = playPayload?.initialScene ?? params.initialScene;
+      const initialScene = isUsablePlayInitialScene(playPayload?.initialScene)
+        ? playPayload?.initialScene
+        : params.initialScene;
       const playLanguage = inferLanguage([title, premise, initialScene].filter(Boolean).join("\n"));
       const world = await store.createWorld({
         id: worldId,

@@ -153,6 +153,8 @@ describe("buildAgentSystemPrompt", () => {
       expect(prompt).toContain("InkOS Play 助手");
       expect(prompt).toContain("propose_action");
       expect(prompt).toContain("play_start");
+      expect(prompt).toContain("propose_action 就是确认卡");
+      expect(prompt).toContain("不要先用普通文字整理一遍再等用户二次确认");
       expect(prompt).not.toContain("play_step：");
       expect(prompt).not.toContain("short_fiction_run");
       expect(prompt).not.toContain("generate_cover");
@@ -218,6 +220,14 @@ describe("buildAgentSystemPrompt", () => {
       expect(prompt).toContain("sub_agent(agent=\"reviser\", chapterNumber=N)");
       expect(prompt).toContain("writer 只会续写新的下一章");
       expect(prompt).toContain("不要用 writer");
+    });
+
+    it("forbids answering chapter-writing requests with raw chapter prose in chat", () => {
+      const prompt = buildAgentSystemPrompt("my-book", "zh", "book");
+      expect(prompt).toContain("不要在聊天回答里直接写章节正文");
+      expect(prompt).toContain("不能输出“# 第 N 章”");
+      expect(prompt).toContain("必须调用 sub_agent(agent=\"writer\")");
+      expect(prompt).toContain("sub_agent 成功返回后，本轮直接结束");
     });
 
     it("English active-book prompt is also isolated", () => {

@@ -54,6 +54,13 @@ vi.mock("@mariozechner/pi-ai", async () => {
     return "";
   }
 
+  function allVisibleUserText(messages: any[]): string {
+    return messages
+      .filter((message) => message?.role === "user")
+      .map((message) => textFromContent(message.content))
+      .join("\n");
+  }
+
   function assistant(content: any[], timestamp = Date.now()) {
     return {
       role: "assistant",
@@ -72,6 +79,7 @@ vi.mock("@mariozechner/pi-ai", async () => {
     const stream = actual.createAssistantMessageEventStream();
     const last = context.messages.at(-1);
     const prompt = lastVisibleUserText(context.messages);
+    const allUserText = allVisibleUserText(context.messages);
     const timestamp = Date.now();
     const message = last?.role === "toolResult"
       ? assistant([{ type: "text", text: "ok" }], timestamp)
@@ -113,6 +121,22 @@ vi.mock("@mariozechner/pi-ai", async () => {
                 id: "tool-1",
                 name: "read",
                 arguments: { path: "book-a/story/story_bible.md" },
+              },
+            ], timestamp)
+        : prompt === "raw chapter"
+          ? assistant([
+              {
+                type: "text",
+                text: "# 第2章\n\n我把账页摊在桌上，冷库的灯一盏盏暗下去。".repeat(80),
+              },
+            ], timestamp)
+        : prompt === "write next" || allUserText.includes("write next")
+          ? assistant([
+              {
+                type: "toolCall",
+                id: "writer-1",
+                name: "sub_agent",
+                arguments: { agent: "writer", instruction: "write next" },
               },
             ], timestamp)
           : assistant([{ type: "text", text: "ok" }], timestamp);
@@ -623,6 +647,46 @@ describe("runAgentSession cache — bookId switch", () => {
         expect.objectContaining({ role: "toolResult", toolName: "propose_action" }),
       ]),
     );
+  });
+
+  it("treats successful production tool results as terminal for the current turn", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {
+      writeNextChapter: vi.fn(async () => ({
+        chapterNumber: 1,
+        title: "第一章",
+        wordCount: 1200,
+        status: "audit-failed",
+      })),
+    } as any;
+
+    const result = await runAgentSession(
+      { sessionId: "book-terminal-session", bookId: "book-a", sessionKind: "book", language: "zh", pipeline, projectRoot, model },
+      "write next",
+    );
+
+    expect(pipeline.writeNextChapter).toHaveBeenCalledTimes(1);
+    expect(result.responseText).toBe("");
+    expect(streamCalls).toHaveLength(1);
+    expect(result.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "toolResult", toolName: "sub_agent" }),
+      ]),
+    );
+  });
+
+  it("blocks raw chapter prose in book chat when no production tool ran", async () => {
+    const model = { provider: "x", id: "y", api: "anthropic-messages" } as any;
+    const pipeline = {} as any;
+
+    const result = await runAgentSession(
+      { sessionId: "book-raw-prose-session", bookId: "book-a", sessionKind: "book", language: "zh", pipeline, projectRoot, model },
+      "raw chapter",
+    );
+
+    expect(result.responseText).toContain("没有落盘");
+    expect(result.responseText).toContain("sub_agent(agent=\"writer\")");
+    expect(result.responseText).not.toContain("# 第2章");
   });
 
   it("exposes play_step only after the play world exists for this session", async () => {

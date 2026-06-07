@@ -10,6 +10,7 @@ import {
   createSubAgentTool,
   createShortFictionRunTool,
   createPatchChapterTextTool,
+  createPlayStartTool,
   createProposeActionTool,
   createRenameEntityTool,
   createWriteFileTool,
@@ -194,6 +195,73 @@ describe("agent deterministic writing tools", () => {
         },
       },
     });
+  });
+
+  it("drops truncated play initial scenes from confirmation payloads", async () => {
+    const tool = createProposeActionTool("zh");
+
+    const result = await tool.execute("proposal-play", {
+      action: "play_start",
+      instruction: "开一个旧戏院检修互动世界，从配电室和后台开始。",
+      playStart: {
+        title: "旧戏院夜巡",
+        premise: "我在县城旧戏院做夜间检修，停电后舞台下传来拍板声。",
+        mode: "open",
+        initialScene: "剧目是《挑滑车》，主演栏里有个名字叫",
+        suggestedActions: ["检查演出表", "走向配电室"],
+      },
+    });
+
+    expect(result.details).toMatchObject({
+      kind: "proposed_action",
+      action: "play_start",
+      actionPayload: {
+        playStart: {
+          title: "旧戏院夜巡",
+          premise: "我在县城旧戏院做夜间检修，停电后舞台下传来拍板声。",
+          mode: "open",
+          suggestedActions: ["检查演出表", "走向配电室"],
+        },
+      },
+    });
+    expect((result.details as any).actionPayload.playStart).not.toHaveProperty("initialScene");
+  });
+
+  it("falls back to the tool argument when confirmed play payload contains a truncated initial scene", async () => {
+    let seededScene = "";
+    const pipeline = {
+      createAgentContext: vi.fn(() => ({})),
+    };
+    const tool = createPlayStartTool(pipeline as never, root, "play-session-truncated", "open", {
+      actionPayload: {
+        playStart: {
+          title: "旧戏院夜巡",
+          premise: "我在县城旧戏院做夜间检修，停电后舞台下传来拍板声。",
+          mode: "open",
+          initialScene: "剧目是《挑滑车》，主演栏里有个名字叫",
+          suggestedActions: ["检查演出表"],
+        },
+      },
+      runnerFactory: () => ({
+        async seedOpening(input) {
+          seededScene = input.sceneText;
+          return null;
+        },
+      }),
+    });
+
+    await tool.execute("play-start", {
+      title: "旧戏院夜巡",
+      premise: "我在县城旧戏院做夜间检修，停电后舞台下传来拍板声。",
+      mode: "open",
+      initialScene: "我站在配电室门口，手电照到泛黄演出表，主演栏写着赵铁生。",
+      suggestedActions: ["检查演出表"],
+    });
+
+    expect(seededScene).toContain("主演栏写着赵铁生");
+    expect(seededScene).not.toContain("名字叫");
+    await expect(readFile(join(root, "worlds", "play-session-truncated", "runs", "main", "projections", "scene.md"), "utf-8"))
+      .resolves.toContain("主演栏写着赵铁生");
   });
 
   it("does not emit a confirmation card when the proposed action payload is invalid", async () => {
