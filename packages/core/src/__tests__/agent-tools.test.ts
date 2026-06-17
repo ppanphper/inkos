@@ -17,6 +17,7 @@ import {
   createRenameEntityTool,
   createScriptCreationTool,
   createStoryboardCreationTool,
+  createInteractiveFilmCreationTool,
   createWriteFileTool,
   createWriteTruthFileTool,
 } from "../agent/agent-tools.js";
@@ -344,6 +345,35 @@ describe("agent deterministic writing tools", () => {
           title: "冷库账页分镜",
           visualStyle: "写实冷色",
           maxShots: 18,
+        },
+      },
+    });
+  });
+
+  it("keeps interactive-film specs in the structured confirmation payload", async () => {
+    const tool = createProposeActionTool("zh");
+
+    const result = await tool.execute("proposal-interactive-film", {
+      action: "interactive_film_create",
+      instruction: "做一个盛世天下式多结局互动影游，包含剧情树、旗标、剧本和分镜。",
+      interactiveFilmCreate: {
+        title: "盛世账页",
+        sourceKind: "投稿需求",
+        requirements: "多分支，多结局，变量记录玩家每次关键抉择。",
+        targetAudience: "欧美互动影游用户",
+        budget: "5000元",
+        referenceMode: "盛世天下式多走向",
+      },
+    });
+
+    expect(result.details).toMatchObject({
+      kind: "proposed_action",
+      action: "interactive_film_create",
+      targetSessionKind: "interactive-film",
+      actionPayload: {
+        interactiveFilmCreate: {
+          title: "盛世账页",
+          budget: "5000元",
         },
       },
     });
@@ -751,12 +781,13 @@ describe("agent deterministic writing tools", () => {
     expect(toolText).not.toContain("short_fiction_run");
   });
 
-  it("exposes script and storyboard creation as standalone production tools", () => {
+  it("exposes script, storyboard, and interactive-film creation as standalone production tools", () => {
     const pipeline = {
       createAgentContext: vi.fn(() => ({})),
     };
     const scriptTool = createScriptCreationTool(pipeline as never, root);
     const storyboardTool = createStoryboardCreationTool(pipeline as never, root);
+    const interactiveFilmTool = createInteractiveFilmCreationTool(pipeline as never, root);
 
     expect(scriptTool.name).toBe("script_create");
     expect(JSON.stringify(scriptTool.parameters)).toContain("targetFormat");
@@ -769,6 +800,12 @@ describe("agent deterministic writing tools", () => {
     expect(JSON.stringify(storyboardTool.parameters)).toContain("maxShots");
     expect(JSON.stringify({ description: storyboardTool.description, parameters: storyboardTool.parameters }))
       .not.toContain("short_fiction_run");
+
+    expect(interactiveFilmTool.name).toBe("interactive_film_create");
+    expect(JSON.stringify(interactiveFilmTool.parameters)).toContain("referenceMode");
+    expect(JSON.stringify(interactiveFilmTool.parameters)).toContain("budget");
+    expect(JSON.stringify({ description: interactiveFilmTool.description, parameters: interactiveFilmTool.parameters }))
+      .not.toContain("play_start");
   });
 
   it("allows architect revise mode to use the active book", async () => {

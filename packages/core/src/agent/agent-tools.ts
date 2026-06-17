@@ -14,7 +14,7 @@ import { assertSafeBookId, deriveBookIdFromTitle } from "../utils/book-id.js";
 import { safeChildPath } from "../utils/path-safety.js";
 import { normalizePlatformId, normalizePlatformOrOther } from "../models/book.js";
 import { generateShortFictionCover, runShortFictionProduction } from "../pipeline/short-fiction-runner.js";
-import { runScriptCreation, runStoryboardCreation } from "../pipeline/script-storyboard-runner.js";
+import { runInteractiveFilmCreation, runScriptCreation, runStoryboardCreation } from "../pipeline/script-storyboard-runner.js";
 import type { ScriptTargetFormat } from "../agents/script-storyboard.js";
 import { createPlayDB, type PlayGraphDB } from "../play/play-db-factory.js";
 import { PlayRunner, type PlayOpeningSeedResult, type PlayReplayResult, type PlayStepResult, type PlayVariantRestoreResult } from "../play/play-runner.js";
@@ -116,6 +116,7 @@ const ProposeActionParams = Type.Object({
     Type.Literal("style_imitation"),
     Type.Literal("script_create"),
     Type.Literal("storyboard_create"),
+    Type.Literal("interactive_film_create"),
   ], {
     description: "The production or assisted Studio workflow the user appears to want, but which needs explicit confirmation from general chat.",
   }),
@@ -230,6 +231,20 @@ const ProposeActionParams = Type.Object({
     projectId: Type.Optional(Type.String({ description: "Optional output id under storyboards/." })),
     outDir: Type.Optional(Type.String({ description: "Optional project-relative output directory. Default storyboards/." })),
   }, { description: "Structured execution args for action=storyboard_create." })),
+  interactiveFilmCreate: Type.Optional(Type.Object({
+    title: Type.Optional(Type.String({ description: "Confirmed interactive-film project title." })),
+    sourceKind: Type.Optional(Type.String({ description: "Source type, e.g. novel excerpt, script, outline, original idea." })),
+    sourceText: Type.Optional(Type.String({ description: "User-provided source text. For long sources, prefer sourcePath instead of summarizing." })),
+    sourcePath: Type.Optional(Type.String({ description: "Optional project-relative source file path." })),
+    requirements: Type.Optional(Type.String({ description: "Confirmed branching, variable/flag, ending, production, visual, or market requirements." })),
+    targetAudience: Type.Optional(Type.String({ description: "Confirmed target audience or market." })),
+    episodeCount: Type.Optional(Type.Number({ description: "Optional target episode/segment count." })),
+    episodeDuration: Type.Optional(Type.String({ description: "Optional per-episode/per-segment duration." })),
+    budget: Type.Optional(Type.String({ description: "Optional budget or production constraints." })),
+    referenceMode: Type.Optional(Type.String({ description: "Optional reference mode, e.g. 盛世天下-style multi-ending interactive drama." })),
+    projectId: Type.Optional(Type.String({ description: "Optional output id under interactive-films/." })),
+    outDir: Type.Optional(Type.String({ description: "Optional project-relative output directory. Default interactive-films/." })),
+  }, { description: "Structured execution args for action=interactive_film_create." })),
 });
 
 type ProposeActionParamsType = Static<typeof ProposeActionParams>;
@@ -238,11 +253,12 @@ type ProposeActionToolOptions = {
   readonly sameSession?: boolean;
 };
 
-function proposedActionSessionKind(action: ProposeActionParamsType["action"]): "book-create" | "short" | "play" | "script" | "storyboard" | "chat" {
+function proposedActionSessionKind(action: ProposeActionParamsType["action"]): "book-create" | "short" | "play" | "script" | "storyboard" | "interactive-film" | "chat" {
   if (action === "create_book") return "book-create";
   if (action === "play_start") return "play";
   if (action === "script_create") return "script";
   if (action === "storyboard_create") return "storyboard";
+  if (action === "interactive_film_create") return "interactive-film";
   if (action === "fanfic_init" || action === "continuation_import" || action === "spinoff_create" || action === "style_imitation") return "chat";
   return "short";
 }
@@ -277,6 +293,8 @@ function proposedActionFallbackTitle(action: ProposeActionParamsType["action"], 
       return isZh ? "创建剧本" : "Create script";
     case "storyboard_create":
       return isZh ? "创建分镜" : "Create storyboard";
+    case "interactive_film_create":
+      return isZh ? "创建互动影游" : "Create interactive film";
   }
 }
 
@@ -358,6 +376,10 @@ function proposedActionPayload(params: ProposeActionParamsType): ActionPayload |
     const storyboardCreate = compactObject(params.storyboardCreate);
     if (storyboardCreate) payload.storyboardCreate = storyboardCreate;
   }
+  if (params.action === "interactive_film_create") {
+    const interactiveFilmCreate = compactObject(params.interactiveFilmCreate);
+    if (interactiveFilmCreate) payload.interactiveFilmCreate = interactiveFilmCreate;
+  }
   return Object.keys(payload).length > 0 ? payload : undefined;
 }
 
@@ -397,6 +419,10 @@ function assertExecutableProposedAction(params: ProposeActionParamsType, payload
   }
   if (params.action === "storyboard_create") {
     requireProposedText(payload?.storyboardCreate?.title, "storyboardCreate.title");
+    return;
+  }
+  if (params.action === "interactive_film_create") {
+    requireProposedText(payload?.interactiveFilmCreate?.title, "interactiveFilmCreate.title");
   }
 }
 
@@ -1053,6 +1079,106 @@ export function createStoryboardCreationTool(
           `Image assets: ${result.assetsManifestPath}`,
         ].join("\n"),
         { kind: "storyboard_created", ...result },
+      );
+    },
+  };
+}
+
+const InteractiveFilmCreateParams = Type.Object({
+  title: Type.String({
+    description: "Required interactive-film project title.",
+  }),
+  instruction: Type.String({
+    description: "Confirmed interactive-film creation instruction, including branching, variables/flags, endings, source, and user preferences.",
+  }),
+  sourceKind: Type.Optional(Type.String({
+    description: "Source type, e.g. novel excerpt, script, outline, original idea.",
+  })),
+  sourceText: Type.Optional(Type.String({
+    description: "User-provided source text. For long sources, prefer sourcePath instead of summarizing.",
+  })),
+  sourcePath: Type.Optional(Type.String({
+    description: "Optional project-relative source file path.",
+  })),
+  requirements: Type.Optional(Type.String({
+    description: "Confirmed branching, variable/flag, ending, production, visual, or market requirements.",
+  })),
+  targetAudience: Type.Optional(Type.String({
+    description: "Optional confirmed target audience or market.",
+  })),
+  episodeCount: Type.Optional(Type.Number({
+    description: "Optional target episode/segment count.",
+  })),
+  episodeDuration: Type.Optional(Type.String({
+    description: "Optional per-episode/per-segment duration.",
+  })),
+  budget: Type.Optional(Type.String({
+    description: "Optional budget or production constraints.",
+  })),
+  referenceMode: Type.Optional(Type.String({
+    description: "Optional reference mode, e.g. 盛世天下-style multi-ending interactive drama.",
+  })),
+  projectId: Type.Optional(Type.String({
+    description: "Optional output id under interactive-films/.",
+  })),
+  outDir: Type.Optional(Type.String({
+    description: "Optional project-relative output directory. Default interactive-films/.",
+  })),
+});
+
+type InteractiveFilmCreateParamsType = Static<typeof InteractiveFilmCreateParams>;
+
+export function createInteractiveFilmCreationTool(
+  pipeline: PipelineRunner,
+  projectRoot: string,
+  options: { readonly actionPayload?: ActionPayload } = {},
+): AgentTool<typeof InteractiveFilmCreateParams> {
+  return {
+    name: "interactive_film_create",
+    description:
+      "Create an interactive film/game script package with story tree, variables/flags, endings, script, storyboard, and image prompts. " +
+      "Writes human-readable Markdown files under interactive-films/.",
+    label: "Interactive Film Creation",
+    parameters: InteractiveFilmCreateParams,
+    async execute(
+      _toolCallId: string,
+      params: InteractiveFilmCreateParamsType,
+      _signal?: AbortSignal,
+      onUpdate?: AgentToolUpdateCallback,
+    ): Promise<AgentToolResult<unknown>> {
+      const progress = (message: string) => onUpdate?.(textResult(message));
+      const payload = options.actionPayload?.interactiveFilmCreate;
+      const result = await runInteractiveFilmCreation({
+        projectRoot,
+        runtime: pipeline.createAgentContext("interactive-film-creation"),
+        title: payload?.title ?? params.title,
+        instruction: params.instruction,
+        sourceKind: payload?.sourceKind ?? params.sourceKind,
+        sourceText: payload?.sourceText ?? params.sourceText,
+        sourcePath: payload?.sourcePath ?? params.sourcePath,
+        requirements: payload?.requirements ?? params.requirements,
+        targetAudience: payload?.targetAudience ?? params.targetAudience,
+        episodeCount: payload?.episodeCount ?? params.episodeCount,
+        episodeDuration: payload?.episodeDuration ?? params.episodeDuration,
+        budget: payload?.budget ?? params.budget,
+        referenceMode: payload?.referenceMode ?? params.referenceMode,
+        projectId: payload?.projectId ?? params.projectId,
+        outDir: payload?.outDir ?? params.outDir,
+        onProgress: progress,
+      });
+
+      return textResult(
+        [
+          `Interactive film "${result.projectId}" completed.`,
+          `Spec: ${result.specPath}`,
+          `Story tree: ${result.storyTreePath}`,
+          `Flags: ${result.flagsPath}`,
+          `Script: ${result.scriptPath}`,
+          `Storyboard: ${result.storyboardPath}`,
+          `Image prompts: ${result.imagePromptsPath}`,
+          `Image assets: ${result.assetsManifestPath}`,
+        ].join("\n"),
+        { kind: "interactive_film_created", ...result },
       );
     },
   };

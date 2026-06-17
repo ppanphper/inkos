@@ -18,6 +18,7 @@ export const RequestedIntentSchema = z.enum([
   "style_imitation",
   "script_create",
   "storyboard_create",
+  "interactive_film_create",
 ]);
 export type RequestedIntent = z.infer<typeof RequestedIntentSchema>;
 
@@ -92,6 +93,21 @@ export const StoryboardCreateActionPayloadSchema = z.object({
   outDir: z.string().min(1).optional(),
 }).strict();
 
+export const InteractiveFilmCreateActionPayloadSchema = z.object({
+  title: z.string().min(1).optional(),
+  sourceKind: z.string().min(1).optional(),
+  sourceText: z.string().min(1).optional(),
+  sourcePath: z.string().min(1).optional(),
+  requirements: z.string().min(1).optional(),
+  targetAudience: z.string().min(1).optional(),
+  episodeCount: z.number().int().min(1).optional(),
+  episodeDuration: z.string().min(1).optional(),
+  budget: z.string().min(1).optional(),
+  referenceMode: z.string().min(1).optional(),
+  projectId: z.string().min(1).optional(),
+  outDir: z.string().min(1).optional(),
+}).strict();
+
 export const ActionPayloadSchema = z.object({
   createBook: CreateBookActionPayloadSchema.optional(),
   shortRun: ShortRunActionPayloadSchema.optional(),
@@ -99,6 +115,7 @@ export const ActionPayloadSchema = z.object({
   generateCover: GenerateCoverActionPayloadSchema.optional(),
   scriptCreate: ScriptCreateActionPayloadSchema.optional(),
   storyboardCreate: StoryboardCreateActionPayloadSchema.optional(),
+  interactiveFilmCreate: InteractiveFilmCreateActionPayloadSchema.optional(),
 }).strict();
 
 export type ActionPayload = z.infer<typeof ActionPayloadSchema>;

@@ -2,11 +2,16 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { AgentContext } from "../agents/base.js";
 import {
+  InteractiveFilmCreationAgent,
   ScriptCreationAgent,
   StoryboardCreationAgent,
   extractStoryboardImagePrompts,
+  extractMarkdownSection,
+  normalizeScriptEpisodeEndLabels,
+  renderInteractiveFilmSpec,
   renderScriptSpec,
   renderStoryboardSpec,
+  type InteractiveFilmCreationInput,
   type ScriptCreationInput,
   type ScriptTargetFormat,
   type StoryboardCreationInput,
@@ -48,11 +53,43 @@ export interface StoryboardCreationRunOptions {
   readonly onProgress?: (message: string) => void;
 }
 
+export interface InteractiveFilmCreationRunOptions {
+  readonly projectRoot: string;
+  readonly runtime: AgentContext;
+  readonly title: string;
+  readonly instruction: string;
+  readonly sourceKind?: string;
+  readonly sourceText?: string;
+  readonly sourcePath?: string;
+  readonly requirements?: string;
+  readonly targetAudience?: string;
+  readonly episodeCount?: number;
+  readonly episodeDuration?: string;
+  readonly budget?: string;
+  readonly referenceMode?: string;
+  readonly projectId?: string;
+  readonly outDir?: string;
+  readonly onProgress?: (message: string) => void;
+}
+
 export interface ScriptCreationRunResult {
   readonly projectId: string;
   readonly baseDir: string;
   readonly specPath: string;
   readonly scriptPath: string;
+}
+
+export interface InteractiveFilmCreationRunResult {
+  readonly projectId: string;
+  readonly baseDir: string;
+  readonly specPath: string;
+  readonly storyTreePath: string;
+  readonly flagsPath: string;
+  readonly scriptPath: string;
+  readonly storyboardPath: string;
+  readonly imagePromptsPath: string;
+  readonly assetsManifestPath: string;
+  readonly assetsDir: string;
 }
 
 export interface StoryboardCreationRunResult {
@@ -122,7 +159,7 @@ export async function runScriptCreation(
 
   options.onProgress?.("Writing script draft...");
   const agent = new ScriptCreationAgent(options.runtime);
-  const script = await agent.writeScript(input);
+  const script = normalizeScriptEpisodeEndLabels(await agent.writeScript(input));
   await writeProjectText(options.projectRoot, join(baseDir, "script.md"), script);
   await writeProjectText(options.projectRoot, join(baseDir, "status.json"), JSON.stringify({
     status: "completed",
@@ -136,6 +173,99 @@ export async function runScriptCreation(
     baseDir,
     specPath: join(baseDir, "script-spec.md"),
     scriptPath: join(baseDir, "script.md"),
+  };
+}
+
+export async function runInteractiveFilmCreation(
+  options: InteractiveFilmCreationRunOptions,
+): Promise<InteractiveFilmCreationRunResult> {
+  const projectId = safeSegment(options.projectId ?? slugify(options.title));
+  const baseDir = join(normalizeOutputDir(options.outDir ?? "interactive-films"), projectId);
+  const sourceText = await resolveSourceText(options.projectRoot, options.sourceText, options.sourcePath);
+  const input: InteractiveFilmCreationInput = {
+    title: options.title,
+    sourceKind: options.sourceKind,
+    sourceText,
+    requirements: mergeRequirements(options.instruction, options.requirements),
+    targetAudience: options.targetAudience,
+    episodeCount: options.episodeCount,
+    episodeDuration: options.episodeDuration,
+    budget: options.budget,
+    referenceMode: options.referenceMode,
+  };
+
+  options.onProgress?.("Writing interactive-film creation spec...");
+  const spec = renderInteractiveFilmSpec(input);
+  await writeProjectText(options.projectRoot, join(baseDir, "interactive-spec.md"), spec);
+
+  options.onProgress?.("Writing story tree, flags, script, storyboard, and image prompts...");
+  const agent = new InteractiveFilmCreationAgent(options.runtime);
+  const packageMarkdown = await agent.writeInteractiveFilm(input);
+  const storyTree = requiredSection(packageMarkdown, [
+    "剧情树",
+    "Story Tree",
+    "Branching Story Tree",
+  ], packageMarkdown);
+  const flags = requiredSection(packageMarkdown, [
+    "变量与旗标表",
+    "变量和旗标表",
+    "变量表",
+    "旗标表",
+    "Variables and Flags",
+    "Flag Table",
+  ], packageMarkdown);
+  const script = requiredSection(packageMarkdown, [
+    "互动剧本",
+    "Interactive Script",
+    "Script",
+  ], packageMarkdown);
+  const storyboard = requiredSection(packageMarkdown, [
+    "分镜与图像提示词",
+    "分镜表",
+    "Storyboard and Image Prompts",
+    "Storyboard",
+  ], packageMarkdown);
+  const imagePrompts = extractStoryboardImagePrompts(storyboard);
+
+  await writeProjectText(options.projectRoot, join(baseDir, "story-tree.md"), storyTree);
+  await writeProjectText(options.projectRoot, join(baseDir, "flags.md"), flags);
+  await writeProjectText(options.projectRoot, join(baseDir, "script.md"), normalizeScriptEpisodeEndLabels(script));
+  await writeProjectText(options.projectRoot, join(baseDir, "storyboard.md"), storyboard);
+  await writeProjectText(options.projectRoot, join(baseDir, "image-prompts.md"), imagePrompts);
+  await ensureProjectDir(options.projectRoot, join(baseDir, "assets", "source"));
+  await ensureProjectDir(options.projectRoot, join(baseDir, "assets", "generated"));
+  await ensureProjectDir(options.projectRoot, join(baseDir, "assets", "selected"));
+  await writeProjectText(options.projectRoot, join(baseDir, "assets.json"), JSON.stringify(
+    createStoryboardAssetsManifest({
+      title: options.title,
+      projectId,
+      baseDir,
+      storyboardPath: join(baseDir, "storyboard.md"),
+      imagePromptsPath: join(baseDir, "image-prompts.md"),
+      imagePrompts,
+      createdAt: new Date().toISOString(),
+    }),
+    null,
+    2,
+  ));
+  await writeProjectText(options.projectRoot, join(baseDir, "status.json"), JSON.stringify({
+    status: "completed",
+    kind: "interactive_film",
+    title: options.title,
+    completedAt: new Date().toISOString(),
+  }, null, 2));
+
+  return {
+    projectId,
+    baseDir,
+    specPath: join(baseDir, "interactive-spec.md"),
+    storyTreePath: join(baseDir, "story-tree.md"),
+    flagsPath: join(baseDir, "flags.md"),
+    scriptPath: join(baseDir, "script.md"),
+    storyboardPath: join(baseDir, "storyboard.md"),
+    imagePromptsPath: join(baseDir, "image-prompts.md"),
+    assetsManifestPath: join(baseDir, "assets.json"),
+    assetsDir: join(baseDir, "assets"),
   };
 }
 
@@ -294,40 +424,34 @@ function slugify(value: string): string {
 function parseStoryboardPromptLines(markdown: string): string[] {
   const lines = markdown.split(/\r?\n/);
   const prompts: string[] = [];
-  let current: string[] = [];
-
-  const flush = () => {
-    const prompt = current.join(" ").replace(/\s+/g, " ").trim();
-    if (prompt) prompts.push(prompt);
-    current = [];
-  };
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (!line || /^#{1,6}\s/u.test(line)) {
-      flush();
+    if (!line) continue;
+    const promptMatch = /(?:^|[|>\-\d.)、\s])(?:\*\*)?\s*(?:Prompt|提示词|图像提示词|分镜图提示词)\s*(?:\*\*)?\s*[：:]\s*(.+?)\s*$/iu.exec(line);
+    if (promptMatch) {
+      const prompt = promptMatch[1]!
+        .replace(/\s*\|\s*$/u, "")
+        .replace(/\*\*$/u, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (prompt) prompts.push(prompt);
       continue;
     }
-    const match = /^(?:[-*]\s*)?(?:镜头|分镜|shot)?\s*([\d０-９]{1,3})[.)、：:\s-]+(.+)$/iu.exec(line);
-    if (match) {
-      flush();
-      current.push(match[2]!.trim());
-      continue;
-    }
-    if (current.length > 0 && /^(?:[-*]\s*)/.test(line)) {
-      flush();
-      current.push(line.replace(/^(?:[-*]\s*)/, "").trim());
-      continue;
-    }
-    if (current.length > 0) {
-      current.push(line);
-    } else {
-      current.push(line.replace(/^(?:[-*]\s*)/, "").trim());
+    const numberedPrompt = /^(?:[-*]\s*)?(?:\d+|[０-９]+)[.)、：:\s-]+(.+)$/u.exec(line);
+    if (numberedPrompt) {
+      const prompt = numberedPrompt[1]!
+        .replace(/\s+/g, " ")
+        .trim();
+      if (prompt) prompts.push(prompt);
     }
   }
-  flush();
 
   return prompts;
+}
+
+function requiredSection(raw: string, headings: readonly string[], fallback: string): string {
+  return extractMarkdownSection(raw, headings)?.trim() || fallback.trim();
 }
 
 export async function projectFileExists(projectRoot: string, relativePath: string): Promise<boolean> {

@@ -45,6 +45,7 @@ import {
   GitBranch,
   Clapperboard,
   Rows3,
+  Film,
 } from "lucide-react";
 import { InkosLogo } from "./InkosLogo";
 
@@ -55,6 +56,7 @@ function SessionKindIcon({ kind, className }: { readonly kind?: string; readonly
     : kind === "short" ? ScrollText
     : kind === "script" ? Clapperboard
     : kind === "storyboard" ? Rows3
+    : kind === "interactive-film" ? Film
     : kind === "book-create" ? BookPlus
     : MessageSquare;
   return <Icon size={13} className={className} />;
@@ -245,7 +247,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
     nav.toBookCreate();
   };
 
-  const launchProjectMode = (kind: "short" | "play" | "script" | "storyboard", playMode?: "guided" | "open") => {
+  const launchProjectMode = (kind: "short" | "play" | "script" | "storyboard" | "interactive-film", playMode?: "guided" | "open") => {
     setProjectChatExpanded(true);
     // Play mode (分支互动 = guided / 自由互动 = open) is now decided here at the
     // launcher, not via an in-chat button.
@@ -300,6 +302,7 @@ export function Sidebar({ nav, activePage, sse, t }: {
             <CreateItem icon={<ScrollText size={16} />} label={t("nav.createShort")} onClick={() => launchProjectMode("short")} />
             <CreateItem icon={<Clapperboard size={16} />} label={t("nav.createScript")} onClick={() => launchProjectMode("script")} />
             <CreateItem icon={<Rows3 size={16} />} label={t("nav.createStoryboard")} onClick={() => launchProjectMode("storyboard")} />
+            <CreateItem icon={<Film size={16} />} label={t("nav.createInteractiveFilm")} onClick={() => launchProjectMode("interactive-film")} />
             <CreateItem icon={<Feather size={16} />} label={t("nav.createFanfic")} onClick={() => nav.toImport("fanfic")} />
             <CreateItem icon={<BookCopy size={16} />} label={t("nav.createSpinoff")} onClick={() => nav.toImport("spinoff")} />
             <CreateItem icon={<Wand2 size={16} />} label={t("nav.createImitation")} onClick={() => nav.toImport("imitation")} />

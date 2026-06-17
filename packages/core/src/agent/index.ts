@@ -10,6 +10,7 @@ export {
   createShortFictionRunTool,
   createScriptCreationTool,
   createStoryboardCreationTool,
+  createInteractiveFilmCreationTool,
   createGenerateCoverTool,
   createPlayStartTool,
   createPlayReviseTool,

@@ -230,6 +230,37 @@ describe("buildAgentSystemPrompt", () => {
       expect(prompt).not.toContain("short_fiction_run");
       expect(prompt).not.toContain("sub_agent");
     });
+
+    it("gates interactive-film creation behind a confirmation proposal", () => {
+      const prompt = buildAgentSystemPrompt(null, "zh", "interactive-film");
+      expect(prompt).toContain("互动影游创作助手");
+      expect(prompt).toContain("propose_action");
+      expect(prompt).toContain("interactive_film_create");
+      expect(prompt).toContain("interactiveFilmCreate");
+      expect(prompt).toContain("变量/旗标");
+      expect(prompt).toContain("多结局");
+      expect(prompt).toContain("不要在聊天里直接写完整交付稿");
+      expect(prompt).not.toContain("script_create：");
+      expect(prompt).not.toContain("storyboard_create：");
+      expect(prompt).not.toContain("play_start：");
+      expect(prompt).not.toContain("short_fiction_run");
+      expect(prompt).not.toContain("sub_agent");
+    });
+
+    it("runs interactive_film_create only after interactive-film creation is confirmed", () => {
+      const prompt = buildAgentSystemPrompt(null, "zh", "interactive-film", {
+        actionSource: "button",
+        requestedIntent: "interactive_film_create",
+      });
+      expect(prompt).toContain("interactive_film_create");
+      expect(prompt).toContain("interactive-films/");
+      expect(prompt).not.toContain("propose_action");
+      expect(prompt).not.toContain("script_create：");
+      expect(prompt).not.toContain("storyboard_create：");
+      expect(prompt).not.toContain("play_start：");
+      expect(prompt).not.toContain("short_fiction_run");
+      expect(prompt).not.toContain("sub_agent");
+    });
   });
 
   describe("play mode", () => {

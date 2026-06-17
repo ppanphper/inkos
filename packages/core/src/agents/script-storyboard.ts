@@ -28,6 +28,18 @@ export interface StoryboardCreationInput {
   readonly maxShots?: number;
 }
 
+export interface InteractiveFilmCreationInput {
+  readonly title: string;
+  readonly sourceKind?: string;
+  readonly sourceText?: string;
+  readonly requirements?: string;
+  readonly targetAudience?: string;
+  readonly episodeCount?: number;
+  readonly episodeDuration?: string;
+  readonly budget?: string;
+  readonly referenceMode?: string;
+}
+
 export class ScriptCreationAgent extends BaseAgent {
   get name(): string {
     return "script-creation-writer";
@@ -57,6 +69,23 @@ export class StoryboardCreationAgent extends BaseAgent {
     ], {
       temperature: 0.45,
       maxTokens: estimateStoryboardMaxTokens(input),
+    });
+    return response.content.trim();
+  }
+}
+
+export class InteractiveFilmCreationAgent extends BaseAgent {
+  get name(): string {
+    return "interactive-film-creation-writer";
+  }
+
+  async writeInteractiveFilm(input: InteractiveFilmCreationInput): Promise<string> {
+    const response = await this.chat([
+      { role: "system", content: buildInteractiveFilmCreationSystemPrompt() },
+      { role: "user", content: buildInteractiveFilmCreationUserPrompt(input) },
+    ], {
+      temperature: 0.5,
+      maxTokens: estimateInteractiveFilmMaxTokens(input),
     });
     return response.content.trim();
   }
@@ -111,6 +140,34 @@ export function renderStoryboardSpec(input: StoryboardCreationInput): string {
   ].join("\n");
 }
 
+export function renderInteractiveFilmSpec(input: InteractiveFilmCreationInput): string {
+  return [
+    `# ${input.title} 互动影游创作规格`,
+    "",
+    "## 目标",
+    "- 交付类型：互动影游 / 互动叙事类游戏 / 影游剧本",
+    input.episodeCount ? `- 剧情段落/集数：${input.episodeCount}` : "- 剧情段落/集数：未指定，按素材和用户要求判断",
+    input.episodeDuration ? `- 单段/单集时长：${input.episodeDuration}` : "- 单段/单集时长：未指定",
+    input.budget ? `- 预算约束：${input.budget}` : "- 预算约束：未指定",
+    input.targetAudience ? `- 目标受众：${input.targetAudience}` : "- 目标受众：未指定",
+    input.referenceMode ? `- 参考模式：${input.referenceMode}` : "- 参考模式：用户未指定，不擅自套固定游戏模板",
+    input.sourceKind ? `- 原素材：${input.sourceKind}` : "- 原素材：用户输入/对话需求",
+    "",
+    "## 用户要求",
+    input.requirements?.trim() || "未单独指定；以用户确认时的 instruction 为准。",
+    "",
+    "## 互动影游边界",
+    "- 这是创作交付稿，不是硬数值 RPG 引擎设计；变量、旗标、关系和结局条件必须服务剧情分支。",
+    "- 必须包含多分支剧情、玩家关键选择、变量/旗标如何改变后续剧情，以及多结局达成条件。",
+    "- 变量系统用自然语言说明即可：状态、关系、隐瞒/公开、证据、物品、身份、好感/信任等；不要强行套固定数值或装备等级。",
+    "- 交付要适配影游/互动剧制作：剧情树清晰、节点可拍、对白可演、分镜可画、图片提示词可用于资产生成。",
+    "- 不替用户擅自决定题材、预算、画风和商业强化强度；未指定处写为可调整。",
+    "",
+    "## 源素材摘要",
+    summarizeSourceForSpec(input.sourceText),
+  ].join("\n");
+}
+
 export function extractStoryboardImagePrompts(raw: string): string {
   const section = extractMarkdownSection(raw, [
     "图像提示词",
@@ -118,7 +175,50 @@ export function extractStoryboardImagePrompts(raw: string): string {
     "Image Prompts",
     "Shot Image Prompts",
   ]);
-  return section?.trim() || raw.trim();
+  const source = section?.trim() || raw.trim();
+  const prompts = extractPromptLines(source);
+  return prompts.length > 0 ? prompts.map((prompt, index) => `${index + 1}. ${prompt}`).join("\n") : "";
+}
+
+export function extractMarkdownSection(raw: string, headings: readonly string[]): string | undefined {
+  const lines = raw.split(/\r?\n/);
+  let start = -1;
+  let level = 0;
+  const normalizedHeadings = headings.map((heading) => heading.trim().toLowerCase());
+  for (let index = 0; index < lines.length; index += 1) {
+    const match = /^(#{1,6})\s*(.+?)\s*$/u.exec(lines[index] ?? "");
+    if (!match) continue;
+    const text = match[2]!.trim().toLowerCase();
+    if (normalizedHeadings.includes(text)) {
+      start = index + 1;
+      level = match[1]!.length;
+      break;
+    }
+  }
+  if (start < 0) return undefined;
+  let end = lines.length;
+  for (let index = start; index < lines.length; index += 1) {
+    const match = /^(#{1,6})\s+/u.exec(lines[index] ?? "");
+    if (match && match[1]!.length <= level) {
+      end = index;
+      break;
+    }
+  }
+  return lines.slice(start, end).join("\n");
+}
+
+export function normalizeScriptEpisodeEndLabels(script: string): string {
+  const lines = script.split(/\r?\n/);
+  let currentEpisode: string | null = null;
+  return lines.map((line) => {
+    const heading = /^#{1,6}\s*第\s*([一二三四五六七八九十百千万\d]+)\s*集(?:\s|$)/u.exec(line.trim());
+    if (heading) currentEpisode = heading[1]!;
+    if (!currentEpisode) return line;
+    return line.replace(
+      /(字幕\s*[：:]\s*)第\s*[一二三四五六七八九十百千万\d]+\s*集完/gu,
+      `$1第${currentEpisode}集完`,
+    );
+  }).join("\n");
 }
 
 function buildScriptCreationSystemPrompt(): string {
@@ -177,7 +277,45 @@ function buildStoryboardCreationUserPrompt(input: StoryboardCreationInput): stri
     "",
     "## 图像提示词",
     "",
-    "为每个镜头写一条可用于生图的提示词。提示词不需要生成画面文字，不加水印，不加 UI，除非用户明确要求。",
+    "为每个镜头写一条可用于生图的提示词。每条必须单独写成 `Prompt: ...`，不要混入分镜正文、表头或解释。提示词不需要生成画面文字，不加水印，不加 UI，除非用户明确要求。",
+  ].join("\n");
+}
+
+function buildInteractiveFilmCreationSystemPrompt(): string {
+  return [
+    "你是互动影游创作工具，负责把创意、小说、剧本或用户需求整理成可制作的互动影游交付稿。",
+    "互动影游不是普通剧本：必须有剧情树、关键选择、变量/旗标、关系/证据/物品状态、多结局达成条件。",
+    "变量系统只服务剧情推进和分支解锁，不要默认 RPG 数值、战斗公式或装备等级；只有用户明确要求时才写对应规则。",
+    "输出必须是 Markdown，包含指定小节。不要写模型自述、流程说明或“以下是”。",
+    "分镜图提示词必须写成单独的 `Prompt: ...` 行，便于后续资产管理；不要添加水印、边框、UI 或画面文字，除非用户明确要求。",
+  ].join("\n");
+}
+
+function buildInteractiveFilmCreationUserPrompt(input: InteractiveFilmCreationInput): string {
+  return [
+    "## 互动影游规格",
+    renderInteractiveFilmSpec(input),
+    "",
+    "## 完整源素材",
+    input.sourceText?.trim() || "用户没有提供完整源素材；请严格根据创作规格和用户要求写一个可继续扩展的互动影游交付稿。",
+    "",
+    "## 输出格式",
+    `# ${input.title} 互动影游方案`,
+    "",
+    "## 剧情树",
+    "用 Markdown 列出主线节点、分支节点、关键选择、回流/不可回流关系。必须能看出多结局结构。",
+    "",
+    "## 变量与旗标表",
+    "列出变量/旗标名、含义、触发方式、影响范围、对应节点。变量可以是关系、状态、证据、物品、身份、公开/隐瞒、结局门槛等。",
+    "",
+    "## 多结局路径",
+    "列出每个结局的达成条件、关键选择链、必需变量/旗标，以及失败或隐藏结局条件。",
+    "",
+    "## 互动剧本",
+    "按节点写可演剧本：场景、人物、动作、对白、玩家选择、变量变化和分支去向。不要只写摘要。",
+    "",
+    "## 分镜与图像提示词",
+    "列出关键镜头。每个镜头包含画面、人物/物件、动作、景别、时长建议。每个镜头后必须单独写一行 `Prompt: ...`。",
   ].join("\n");
 }
 
@@ -213,29 +351,23 @@ function estimateStoryboardMaxTokens(input: StoryboardCreationInput): number {
   return Math.min(24000, Math.max(10000, shots * 700));
 }
 
-function extractMarkdownSection(raw: string, headings: readonly string[]): string | undefined {
-  const lines = raw.split(/\r?\n/);
-  let start = -1;
-  let level = 0;
-  const normalizedHeadings = headings.map((heading) => heading.trim().toLowerCase());
-  for (let index = 0; index < lines.length; index += 1) {
-    const match = /^(#{1,6})\s*(.+?)\s*$/u.exec(lines[index] ?? "");
-    if (!match) continue;
-    const text = match[2]!.trim().toLowerCase();
-    if (normalizedHeadings.includes(text)) {
-      start = index + 1;
-      level = match[1]!.length;
-      break;
-    }
+function estimateInteractiveFilmMaxTokens(input: InteractiveFilmCreationInput): number {
+  const episodes = input.episodeCount ?? 6;
+  return Math.min(36000, Math.max(16000, episodes * 3000));
+}
+
+function extractPromptLines(markdown: string): string[] {
+  const prompts: string[] = [];
+  for (const rawLine of markdown.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const promptMatch = /(?:^|[|>\-\d.)、\s])(?:\*\*)?\s*(?:Prompt|提示词|图像提示词|分镜图提示词)\s*(?:\*\*)?\s*[：:]\s*(.+?)\s*$/iu.exec(line);
+    if (!promptMatch) continue;
+    const prompt = promptMatch[1]!
+      .replace(/\s*\|\s*$/u, "")
+      .replace(/\*\*$/u, "")
+      .trim();
+    if (prompt) prompts.push(prompt);
   }
-  if (start < 0) return undefined;
-  let end = lines.length;
-  for (let index = start; index < lines.length; index += 1) {
-    const match = /^(#{1,6})\s+/u.exec(lines[index] ?? "");
-    if (match && match[1]!.length <= level) {
-      end = index;
-      break;
-    }
-  }
-  return lines.slice(start, end).join("\n");
+  return prompts;
 }

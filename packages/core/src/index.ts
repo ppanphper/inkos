@@ -177,6 +177,7 @@ export {
   ActionPayloadSchema,
   CreateBookActionPayloadSchema,
   GenerateCoverActionPayloadSchema,
+  InteractiveFilmCreateActionPayloadSchema,
   PlayStartActionPayloadSchema,
   RequestedIntentSchema,
   ScriptCreateActionPayloadSchema,
@@ -448,8 +449,8 @@ export { analyzeHookHealth } from "./utils/hook-health.js";
 export { PipelineRunner, type PipelineConfig, type ChapterPipelineResult, type DraftResult, type PlanChapterResult, type ComposeChapterResult, type ReviseResult, type TruthFiles, type BookStatusInfo, type ImportChaptersInput, type ImportChaptersResult, type TokenUsageSummary } from "./pipeline/runner.js";
 export { Scheduler, type SchedulerConfig } from "./pipeline/scheduler.js";
 export { detectChapter, detectAndRewrite, loadDetectionHistory, type DetectChapterResult, type DetectAndRewriteResult } from "./pipeline/detection-runner.js";
-export { runScriptCreation, runStoryboardCreation, createStoryboardAssetsManifest, type ScriptCreationRunOptions, type ScriptCreationRunResult, type StoryboardAssetsManifest, type StoryboardCreationRunOptions, type StoryboardCreationRunResult, type StoryboardImageAsset, type StoryboardImageAssetVariant } from "./pipeline/script-storyboard-runner.js";
-export { ScriptCreationAgent, StoryboardCreationAgent, renderScriptSpec, renderStoryboardSpec, type ScriptCreationInput, type ScriptTargetFormat, type StoryboardCreationInput } from "./agents/script-storyboard.js";
+export { runScriptCreation, runStoryboardCreation, runInteractiveFilmCreation, createStoryboardAssetsManifest, type ScriptCreationRunOptions, type ScriptCreationRunResult, type StoryboardAssetsManifest, type StoryboardCreationRunOptions, type StoryboardCreationRunResult, type InteractiveFilmCreationRunOptions, type InteractiveFilmCreationRunResult, type StoryboardImageAsset, type StoryboardImageAssetVariant } from "./pipeline/script-storyboard-runner.js";
+export { ScriptCreationAgent, StoryboardCreationAgent, InteractiveFilmCreationAgent, renderScriptSpec, renderStoryboardSpec, renderInteractiveFilmSpec, type ScriptCreationInput, type ScriptTargetFormat, type StoryboardCreationInput, type InteractiveFilmCreationInput } from "./agents/script-storyboard.js";
 
 // State
 export { StateManager } from "./state/manager.js";

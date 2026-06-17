@@ -2,7 +2,11 @@ import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runStoryboardCreation, type StoryboardAssetsManifest } from "../pipeline/script-storyboard-runner.js";
+import {
+  runInteractiveFilmCreation,
+  runStoryboardCreation,
+  type StoryboardAssetsManifest,
+} from "../pipeline/script-storyboard-runner.js";
 import type { AgentContext } from "../agents/base.js";
 
 const chatCompletionMock = vi.hoisted(() => vi.fn());
@@ -26,8 +30,8 @@ describe("storyboard creation runner", () => {
         "镜头 2：手电光扫过旧账页。",
         "",
         "## 图像提示词",
-        "1. 冷库门口，女出纳推门，冷色写实，9:16",
-        "2. 旧账页特写，手电光扫过红章",
+        "1. Prompt: 冷库门口，女出纳推门，冷色写实，9:16",
+        "2. Prompt: 旧账页特写，手电光扫过红章",
       ].join("\n"),
       usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
     });
@@ -63,6 +67,62 @@ describe("storyboard creation runner", () => {
     expect(manifest.assets.map((asset) => [asset.shotId, asset.prompt])).toEqual([
       ["shot-001", "冷库门口，女出纳推门，冷色写实，9:16"],
       ["shot-002", "旧账页特写，手电光扫过红章"],
+    ]);
+  });
+
+  it("writes interactive-film story tree, flags, script, storyboard, prompts, and image assets", async () => {
+    chatCompletionMock.mockResolvedValueOnce({
+      content: [
+        "# 盛世账页 互动影游方案",
+        "",
+        "## 剧情树",
+        "- N1 入宫查账 -> 选择 A 公开账页 / 选择 B 暗藏账页",
+        "",
+        "## 变量与旗标表",
+        "| 变量 | 含义 | 触发 |",
+        "| --- | --- | --- |",
+        "| trust_guard | 侍卫信任 | 选择交出证据 |",
+        "",
+        "## 多结局路径",
+        "- 真相公开结局：trust_guard + ledger_public",
+        "",
+        "## 互动剧本",
+        "### 节点 N1",
+        "玩家选择：公开账页 / 暗藏账页",
+        "",
+        "## 分镜与图像提示词",
+        "镜头 1：女官在烛光下展开账页。",
+        "Prompt: 古装宫廷账页特写，女官手持账册，烛光，写实，16:9",
+        "镜头 2：侍卫拦在宫门前。",
+        "Prompt: 宫门雨夜，侍卫回头，压迫感，电影感，16:9",
+      ].join("\n"),
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+    });
+
+    const result = await runInteractiveFilmCreation({
+      projectRoot: root,
+      runtime: makeRuntime(root),
+      title: "盛世账页",
+      instruction: "做一个盛世天下式多结局互动影游。",
+      projectId: "shengshi-ledger",
+      budget: "5000元",
+      referenceMode: "盛世天下式多走向",
+    });
+
+    expect(result.baseDir).toBe("interactive-films/shengshi-ledger");
+    await expect(readFile(join(root, result.specPath), "utf-8")).resolves.toContain("互动影游创作规格");
+    await expect(readFile(join(root, result.storyTreePath), "utf-8")).resolves.toContain("N1 入宫查账");
+    await expect(readFile(join(root, result.flagsPath), "utf-8")).resolves.toContain("trust_guard");
+    await expect(readFile(join(root, result.scriptPath), "utf-8")).resolves.toContain("节点 N1");
+    await expect(readFile(join(root, result.storyboardPath), "utf-8")).resolves.toContain("镜头 1");
+    await expect(readFile(join(root, result.imagePromptsPath), "utf-8")).resolves.toContain("古装宫廷账页特写");
+
+    const manifest = JSON.parse(
+      await readFile(join(root, result.assetsManifestPath), "utf-8"),
+    ) as StoryboardAssetsManifest;
+    expect(manifest.assets.map((asset) => asset.prompt)).toEqual([
+      "古装宫廷账页特写，女官手持账册，烛光，写实，16:9",
+      "宫门雨夜，侍卫回头，压迫感，电影感，16:9",
     ]);
   });
 });

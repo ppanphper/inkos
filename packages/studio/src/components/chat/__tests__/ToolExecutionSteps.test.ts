@@ -162,6 +162,40 @@ describe("groupChronologically", () => {
     });
   });
 
+  it("extracts and renders interactive-film creation artifacts", () => {
+    const exec = makeExec({
+      id: "interactive-film-1",
+      tool: "interactive_film_create",
+      label: "互动影游",
+      details: {
+        kind: "interactive_film_created",
+        title: "盛世天下影游方案",
+        projectId: "shengshi-branching",
+        specPath: "interactive-films/shengshi-branching/interactive-spec.md",
+        storyTreePath: "interactive-films/shengshi-branching/story-tree.md",
+        flagsPath: "interactive-films/shengshi-branching/flags.md",
+        scriptPath: "interactive-films/shengshi-branching/script.md",
+        storyboardPath: "interactive-films/shengshi-branching/storyboard.md",
+        imagePromptsPath: "interactive-films/shengshi-branching/image-prompts.md",
+        assetsManifestPath: "interactive-films/shengshi-branching/assets.json",
+      },
+    });
+
+    expect(getGeneratedArtifactDetails(exec)).toMatchObject({
+      kind: "interactive_film_created",
+      projectId: "shengshi-branching",
+      storyTreePath: "interactive-films/shengshi-branching/story-tree.md",
+      flagsPath: "interactive-films/shengshi-branching/flags.md",
+      assetsManifestPath: "interactive-films/shengshi-branching/assets.json",
+    });
+
+    const html = renderToStaticMarkup(React.createElement(ToolExecutionSteps, { executions: [exec] }));
+    expect(html).toContain("互动影游已生成");
+    expect(html).toContain("剧情树");
+    expect(html).toContain("变量旗标");
+    expect(html).toContain("图片资产");
+  });
+
   it("extracts play scene details from play tools", () => {
     const exec = makeExec({
       id: "play-1",

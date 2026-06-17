@@ -91,7 +91,7 @@ function extractResultPath(result: string | undefined, label: string): string | 
 }
 
 export interface GeneratedArtifactDetails {
-  readonly kind: "short_fiction_created" | "cover_generated" | "script_created" | "storyboard_created";
+  readonly kind: "short_fiction_created" | "cover_generated" | "script_created" | "storyboard_created" | "interactive_film_created";
   readonly title?: string;
   readonly storyId?: string;
   readonly projectId?: string;
@@ -103,6 +103,8 @@ export interface GeneratedArtifactDetails {
   readonly specPath?: string;
   readonly scriptPath?: string;
   readonly storyboardPath?: string;
+  readonly storyTreePath?: string;
+  readonly flagsPath?: string;
   readonly imagePromptsPath?: string;
   readonly assetsManifestPath?: string;
 }
@@ -185,7 +187,7 @@ function proposedTargetRouteField(record: Record<string, unknown>): ProposedActi
 }
 
 export function getGeneratedArtifactDetails(exec: ToolExecution): GeneratedArtifactDetails | null {
-  if (!["short_fiction_run", "generate_cover", "script_create", "storyboard_create"].includes(exec.tool)) return null;
+  if (!["short_fiction_run", "generate_cover", "script_create", "storyboard_create", "interactive_film_create"].includes(exec.tool)) return null;
   if (!exec.details || typeof exec.details !== "object") return null;
   const record = exec.details as Record<string, unknown>;
   if (
@@ -193,6 +195,7 @@ export function getGeneratedArtifactDetails(exec: ToolExecution): GeneratedArtif
     && record.kind !== "cover_generated"
     && record.kind !== "script_created"
     && record.kind !== "storyboard_created"
+    && record.kind !== "interactive_film_created"
   ) return null;
   return {
     kind: record.kind,
@@ -207,17 +210,25 @@ export function getGeneratedArtifactDetails(exec: ToolExecution): GeneratedArtif
     specPath: stringField(record, "specPath"),
     scriptPath: stringField(record, "scriptPath"),
     storyboardPath: stringField(record, "storyboardPath"),
+    storyTreePath: stringField(record, "storyTreePath"),
+    flagsPath: stringField(record, "flagsPath"),
     imagePromptsPath: stringField(record, "imagePromptsPath"),
     assetsManifestPath: stringField(record, "assetsManifestPath"),
   };
 }
 
 function ScriptStoryboardResultPreview({ exec }: { exec: ToolExecution }) {
-  if (!["script_create", "storyboard_create"].includes(exec.tool) || exec.status !== "completed") return null;
+  if (!["script_create", "storyboard_create", "interactive_film_create"].includes(exec.tool) || exec.status !== "completed") return null;
   const details = getGeneratedArtifactDetails(exec);
-  if (!details || (details.kind !== "script_created" && details.kind !== "storyboard_created")) return null;
+  if (!details || (
+    details.kind !== "script_created"
+    && details.kind !== "storyboard_created"
+    && details.kind !== "interactive_film_created"
+  )) return null;
   const rows = [
     details.specPath ? ["规格", details.specPath] as const : null,
+    details.storyTreePath ? ["剧情树", details.storyTreePath] as const : null,
+    details.flagsPath ? ["变量旗标", details.flagsPath] as const : null,
     details.scriptPath ? ["剧本", details.scriptPath] as const : null,
     details.storyboardPath ? ["分镜", details.storyboardPath] as const : null,
     details.imagePromptsPath ? ["图像提示词", details.imagePromptsPath] as const : null,
@@ -227,7 +238,7 @@ function ScriptStoryboardResultPreview({ exec }: { exec: ToolExecution }) {
   return (
     <div className="mx-3 mb-3 mt-1 rounded-xl border border-primary/20 bg-primary/5 px-3 py-2.5">
       <div className="text-[16px] leading-6 font-semibold text-primary">
-        {details.kind === "script_created" ? "剧本已生成" : "分镜已生成"}
+        {details.kind === "script_created" ? "剧本已生成" : details.kind === "storyboard_created" ? "分镜已生成" : "互动影游已生成"}
       </div>
       <div className="mt-2 space-y-1.5">
         {rows.map(([label, path]) => (
@@ -562,6 +573,7 @@ function isPipelineTool(tool: string): boolean {
     || tool === "short_fiction_run"
     || tool === "script_create"
     || tool === "storyboard_create"
+    || tool === "interactive_film_create"
     || tool === "generate_cover"
     || tool === "play_edit"
     || tool === "play_start"

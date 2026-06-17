@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   extractStoryboardImagePrompts,
+  normalizeScriptEpisodeEndLabels,
+  renderInteractiveFilmSpec,
   renderScriptSpec,
   renderStoryboardSpec,
 } from "../agents/script-storyboard.js";
@@ -56,8 +58,8 @@ describe("script and storyboard creation helpers", () => {
       "镜头 1：出纳推开冷库门。",
       "",
       "## 图像提示词",
-      "1. 冷库门口，女出纳，冷色写实，9:16",
-      "2. 旧账页特写，手电光，压迫感",
+      "1. Prompt: 冷库门口，女出纳，冷色写实，9:16",
+      "2. Prompt: 旧账页特写，手电光，压迫感",
       "",
       "## 备注",
       "后续可扩展。",
@@ -69,6 +71,67 @@ describe("script and storyboard creation helpers", () => {
     expect(prompts).not.toContain("备注");
   });
 
+  it("extracts only explicit prompt lines when the model embeds prompts in storyboard content", () => {
+    const prompts = extractStoryboardImagePrompts([
+      "# 冷库账页分镜",
+      "",
+      "## 分镜表",
+      "| 镜号 | 画面 | 提示词 |",
+      "| --- | --- | --- |",
+      "| 1 | 女出纳推开冷库门 | Prompt: 冷库门口，女出纳推门，冷色写实，9:16 |",
+      "| 2 | 手电扫过旧账页 | Prompt: 旧账页特写，手电光扫过红章 |",
+      "",
+      "这是一段普通解释，不应进入图片资产。",
+    ].join("\n"));
+
+    expect(prompts).toBe([
+      "1. 冷库门口，女出纳推门，冷色写实，9:16",
+      "2. 旧账页特写，手电光扫过红章",
+    ].join("\n"));
+  });
+
+  it("does not treat whole storyboard prose as image prompts", () => {
+    const prompts = extractStoryboardImagePrompts([
+      "# 冷库账页分镜",
+      "",
+      "## 分镜表",
+      "镜头 1：女出纳推开冷库门。",
+      "镜头 2：手电光扫过旧账页。",
+    ].join("\n"));
+
+    expect(prompts).toBe("");
+  });
+
+  it("normalizes mismatched episode-end subtitle labels inside each episode section", () => {
+    const script = normalizeScriptEpisodeEndLabels([
+      "# 冷库账页",
+      "### 第一集",
+      "字幕：第一集完",
+      "### 第三集",
+      "字幕：第二集完",
+    ].join("\n"));
+
+    expect(script).toContain("字幕：第三集完");
+    expect(script).not.toContain("字幕：第二集完");
+  });
+
+  it("renders an interactive-film spec with branch and flag boundaries", () => {
+    const spec = renderInteractiveFilmSpec({
+      title: "盛世账页",
+      sourceKind: "投稿需求",
+      requirements: "多结局，变量记录玩家每次关键抉择。",
+      targetAudience: "欧美互动影游用户",
+      budget: "5000元",
+      referenceMode: "盛世天下式多走向",
+    });
+
+    expect(spec).toContain("# 盛世账页 互动影游创作规格");
+    expect(spec).toContain("交付类型：互动影游");
+    expect(spec).toContain("变量/旗标");
+    expect(spec).toContain("多结局");
+    expect(spec).toContain("5000元");
+  });
+
   it("builds a storyboard image asset manifest from editable prompts", () => {
     const manifest = createStoryboardAssetsManifest({
       title: "冷库账页",
@@ -77,8 +140,8 @@ describe("script and storyboard creation helpers", () => {
       storyboardPath: "storyboards/cold-ledger/storyboard.md",
       imagePromptsPath: "storyboards/cold-ledger/image-prompts.md",
       imagePrompts: [
-        "1. 冷库门口，女出纳推门，冷色写实，9:16",
-        "2. 旧账页特写，手电光扫过红章",
+        "1. Prompt: 冷库门口，女出纳推门，冷色写实，9:16",
+        "2. Prompt: 旧账页特写，手电光扫过红章",
       ].join("\n"),
       createdAt: "2026-06-16T00:00:00.000Z",
     });
