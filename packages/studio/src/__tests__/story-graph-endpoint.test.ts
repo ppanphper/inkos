@@ -31,5 +31,15 @@ describe("GET /api/v1/projects/:id/story-graph", () => {
     const app = createStudioServer({} as never, root);
     const res = await app.request("/api/v1/projects/nope/story-graph");
     expect(res.status).toBe(404);
+    const body = await res.json() as { error: { code: string } };
+    expect(body.error.code).toBe("NOT_FOUND");
+  });
+
+  it("returns 400 for a path-traversal id", async () => {
+    const app = createStudioServer({} as never, root);
+    const res = await app.request("/api/v1/projects/..%2Fsecret/story-graph");
+    expect(res.status).toBe(400);
+    const body = await res.json() as { error: { code: string } };
+    expect(body.error.code).toBe("INVALID_ID");
   });
 });

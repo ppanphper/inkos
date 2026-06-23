@@ -4906,6 +4906,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string) {
 
   app.get("/api/v1/projects/:id/story-graph", async (c) => {
     const id = c.req.param("id");
+    if (!isSafeBookId(id)) {
+      return c.json({ error: { code: "INVALID_ID", message: `invalid project id: ${id}` } }, 400);
+    }
     const graphPath = join(root, "interactive-films", id, "story-graph.json");
     try {
       const raw = await readFile(graphPath, "utf-8");
