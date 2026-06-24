@@ -35,9 +35,29 @@ function lastUserText(context: { messages?: Array<{ role: string; content: unkno
 function alreadyProposed(
   context: { messages?: Array<{ role: string; content: unknown; toolName?: string }> },
 ): boolean {
-  return (context.messages ?? []).some(
-    (m) => m.role === "toolResult" && (m as { toolName?: string }).toolName === "propose_action",
-  );
+  return (context.messages ?? []).some((m) => {
+    // Agent format (non-openai-completions): role="toolResult" with toolName
+    if (m.role === "toolResult" && (m as { toolName?: string }).toolName === "propose_action") {
+      return true;
+    }
+    // LLM format (openai-completions): assistant message with toolCall content
+    if (m.role === "assistant" && Array.isArray(m.content)) {
+      if (
+        (m.content as Array<{ type: string; name?: string }>).some(
+          (c) => c.type === "toolCall" && c.name === "propose_action",
+        )
+      ) {
+        return true;
+      }
+    }
+    // LLM format (openai-completions folded): tool result folded into user message string
+    if (m.role === "user" && typeof m.content === "string") {
+      if (/- propose_action \(/.test(m.content as string)) {
+        return true;
+      }
+    }
+    return false;
+  });
 }
 
 /**

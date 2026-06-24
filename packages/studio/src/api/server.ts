@@ -3458,7 +3458,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         bookSession = updatedSession;
       }
       let activeBookConfig: { readonly language?: string } | null = null;
-      if (agentBookId) {
+      if (agentBookId && sessionKind !== "interactive-film-authoring") {
         try {
           activeBookConfig = await state.loadBookConfig(agentBookId);
         } catch {
