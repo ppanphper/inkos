@@ -11,7 +11,10 @@ export interface CreateSkillRegistryOptions {
 }
 
 export function createSkillRegistry(options: CreateSkillRegistryOptions = {}): SkillRegistry {
-  const skills = dedupeSkills(options.skills ?? BUILTIN_CAPABILITY_SKILLS);
+  const skills = dedupeSkills([
+    ...BUILTIN_CAPABILITY_SKILLS,
+    ...(options.skills ?? []),
+  ]);
   const byId = new Map(skills.map((skill) => [skill.id, skill]));
 
   return {

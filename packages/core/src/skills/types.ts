@@ -26,6 +26,7 @@ export const CapabilitySkillManifestSchema = z.object({
   promptPacks: z.array(z.string().min(1)).default([]),
   toolHints: z.array(z.string().min(1)).default([]),
   contextNeeds: z.array(SkillContextNeedSchema).default([]),
+  body: z.string().default(""),
   source: z.enum(["builtin", "project", "user", "external"]).default("builtin"),
 });
 export type CapabilitySkillManifest = z.infer<typeof CapabilitySkillManifestSchema>;

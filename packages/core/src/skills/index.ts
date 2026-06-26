@@ -8,6 +8,12 @@ export {
   type SkillContextPlanInput,
 } from "./context-planner.js";
 export {
+  loadExternalCapabilitySkills,
+  type ExternalSkillDiagnostic,
+  type LoadExternalCapabilitySkillsInput,
+  type LoadExternalCapabilitySkillsResult,
+} from "./external-loader.js";
+export {
   PromptPackPromptNotFoundError,
   getBuiltinPrompt,
   listBuiltinPromptPacks,

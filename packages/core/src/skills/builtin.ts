@@ -94,6 +94,7 @@ const RAW_BUILTIN_CAPABILITY_SKILLS: CapabilitySkillManifest[] = [
         retrieval: "semantic",
       },
     ],
+    body: "",
     source: "builtin",
   },
   {
@@ -168,6 +169,7 @@ const RAW_BUILTIN_CAPABILITY_SKILLS: CapabilitySkillManifest[] = [
         retrieval: "semantic",
       },
     ],
+    body: "",
     source: "builtin",
   },
   {
@@ -246,6 +248,7 @@ const RAW_BUILTIN_CAPABILITY_SKILLS: CapabilitySkillManifest[] = [
         retrieval: "semantic",
       },
     ],
+    body: "",
     source: "builtin",
   },
 ];
