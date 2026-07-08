@@ -100,6 +100,32 @@ describe("translation ingestion", () => {
     expect(firstChapter.segments.map((segment) => segment.source)).toContain("第一段很短。");
   });
 
+  it("creates a translation project from plain TXT", async () => {
+    await writeFile(
+      join(root, "inputs", "source.txt"),
+      [
+        "第一段没有 Markdown 标题。",
+        "",
+        "第二段仍然需要作为翻译段落保留。",
+      ].join("\n"),
+    );
+
+    const created = await createTranslationProjectFromFile(root, {
+      filePath: "inputs/source.txt",
+      sourceLanguage: "zh",
+      targetLanguage: "ko",
+    });
+
+    expect(created.manifest.source.kind).toBe("text");
+    expect(created.manifest.targetLanguage).toBe("ko");
+    expect(created.manifest.chapters).toHaveLength(1);
+
+    const chapter = await readJson<{ segments: Array<{ source: string }> }>(
+      join(root, created.manifest.chapters[0]!.sourcePath),
+    );
+    expect(chapter.segments.map((segment) => segment.source)).toContain("第二段仍然需要作为翻译段落保留。");
+  });
+
   it("extracts PDF text and records page count", async () => {
     await writeFile(join(root, "inputs", "scan.pdf"), Buffer.from("%PDF fake"));
 
