@@ -79,6 +79,8 @@ export const RequestsRewoundEventSchema = BaseEventSchema.extend({
   targetRequestId: z.string().min(1),
   requestIds: z.array(z.string().min(1)).min(1),
   restoredWork: WorkCheckpointRefSchema.optional(),
+  /** Project-relative copy of every file the restore replaced or deleted. */
+  backupPath: z.string().min(1).optional(),
 });
 
 export const MessageEventSchema = BaseEventSchema.extend({

@@ -84,6 +84,13 @@ export function RewindDialog({ open, isZh, mode, plan, busy, error, onConfirm, o
             ) : null}
           </ul>
         ) : null}
+        {changes.length > 0 ? (
+          <p className="text-xs leading-5 text-muted-foreground">
+            {isZh
+              ? "回退前，这些文件的当前版本会备份到项目的 .inkos/rewind-backups。"
+              : "Current versions of these files are backed up to .inkos/rewind-backups in the project first."}
+          </p>
+        ) : null}
         {error ? <p role="alert" className="text-sm leading-6 text-destructive">{error}</p> : null}
         <DialogFooter className="gap-1 sm:gap-1">
           <button

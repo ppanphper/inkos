@@ -29,6 +29,7 @@ import {
   SessionAlreadyBoundError,
   abortAgentSession,
   evictAgentCache,
+  hasActiveAgentTurnOnWork,
   runAgentSession,
   planSessionRewind,
   applySessionRewind,
@@ -4576,11 +4577,32 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     if (!target.requestId && !target.clientRequestId) {
       throw new ApiError(400, "REWIND_TARGET_REQUIRED", "requestId or clientRequestId is required");
     }
-    const expectedRequestIds = Array.isArray(body.expectedRequestIds)
-      && body.expectedRequestIds.every((value) => typeof value === "string")
-      ? body.expectedRequestIds as string[] : undefined;
+    if (body.expectedRequestIds !== undefined && !(Array.isArray(body.expectedRequestIds)
+      && body.expectedRequestIds.every((value) => typeof value === "string" && value.length > 0))) {
+      throw new ApiError(400, "INVALID_EXPECTED_REQUEST_IDS", "expectedRequestIds must be a list of request ids");
+    }
+    const expectedRequestIds = body.expectedRequestIds as string[] | undefined;
     return { target, restoreWork: body.restoreWork === true, expectedRequestIds };
   };
+
+  // 回退文件前确认同一作品上没有其他会话的回复或生产任务在运行：它们读到的是
+  // 回退前的状态，之后的写入会与回退结果交错。
+  const isWorkBusyForRewind = async (sessionId: string, workId: string) => {
+    if (hasActiveAgentTurnOnWork(root, workId, sessionId)) return true;
+    const busySessions = new Set<string>([
+      ...[...chatRequests].filter(([, request]) => request.snapshot.status === "running").map(([id]) => id),
+      ...reservedProductionSessions.keys(),
+    ]);
+    busySessions.delete(sessionId);
+    for (const otherId of busySessions) {
+      const other = await loadBookSession(root, otherId).catch(() => null);
+      if ((other?.workId ?? other?.bookId) === workId) return true;
+    }
+    return false;
+  };
+
+  // 撤回期间不接受该会话的新请求，避免新回合读到撤回前的上下文。
+  const rewindingSessions = new Set<string>();
 
   // 撤回只在会话空闲时进行：运行中的聊天轮或后台任务还会继续写记录和作品文件。
   const assertSessionIdleForRewind = async (sessionId: string) => {
@@ -4612,12 +4634,21 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
   app.post("/api/v1/sessions/:sessionId/rewind", async (c) => {
     const sessionId = c.req.param("sessionId");
     const input = await parseRewindTarget(c);
-    await assertSessionIdleForRewind(sessionId);
+    if (rewindingSessions.has(sessionId)) {
+      throw new ApiError(409, "SESSION_BUSY", "这条会话正在撤回，请稍候。");
+    }
+    rewindingSessions.add(sessionId);
     let result;
     try {
-      result = await applySessionRewind(root, sessionId, input);
+      await assertSessionIdleForRewind(sessionId);
+      result = await applySessionRewind(root, sessionId, {
+        ...input,
+        isWorkBusy: (workId) => isWorkBusyForRewind(sessionId, workId),
+      });
     } catch (error) {
       return rewindErrorResponse(c, error);
+    } finally {
+      rewindingSessions.delete(sessionId);
     }
     evictAgentCache(sessionId);
     // 被撤回的最后一轮不再提供重试入口。
@@ -4634,6 +4665,9 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     if (c.req.method !== "POST") return next();
     const body = await c.req.json().catch(() => ({}));
     const sessionId = typeof body.sessionId === "string" ? body.sessionId : "";
+    if (sessionId && rewindingSessions.has(sessionId)) return c.json({
+      error: { code: "SESSION_REWINDING", message: "这条会话正在撤回消息，请稍候再发送。" },
+    }, 409);
     const confirmed = isConfirmedProductionAction(
       normalizeStudioActionSource(body.actionSource),
       normalizeStudioRequestedIntent(body.requestedIntent),

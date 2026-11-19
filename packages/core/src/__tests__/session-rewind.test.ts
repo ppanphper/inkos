@@ -197,6 +197,21 @@ describe("session rewind", () => {
     expect(events.at(-1)).toMatchObject({ type: "requests_rewound", restoredWork: { workId: "w1" } });
   });
 
+  it("restores source content that was never registered as a revision when the request started", async () => {
+    await createWork({ "story/state.md": "状态A\n" });
+    await writeFile(join(root, "works/w1/source/story/state.md"), "作者改过但未登记\n");
+    await createSession("w1");
+    await startRequest("r1", "改状态", { workId: "w1" });
+    await writeWork({ "story/state.md": "状态B\n" });
+    await finishRequest("r1", "改好了", { workId: "w1" });
+
+    expect((await planSessionRewind(root, SESSION, { requestId: "r1" })).work)
+      .toEqual({ status: "available", workId: "w1", changes: [{ path: "story/state.md", action: "restore" }] });
+    await applySessionRewind(root, SESSION, { target: { requestId: "r1" }, restoreWork: true });
+
+    expect(await source("story/state.md")).toBe("作者改过但未登记\n");
+  });
+
   it("refuses to restore files changed after the last request but can still rewind the conversation", async () => {
     await createWork({ "story/state.md": "状态A\n" });
     await createSession("w1");

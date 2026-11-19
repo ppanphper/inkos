@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { access, copyFile, mkdir, readFile } from "node:fs/promises";
+import { dirname, extname, join } from "node:path";
 import {
   ArtifactManifestSchema,
   WorkManifestSchema,
@@ -8,7 +8,7 @@ import {
   type WorkManifest,
 } from "../harness/contracts.js";
 import { loadWorkManifest, workDirectory, WORKS_DIRECTORY, WORK_MANIFEST_FILE } from "../harness/work-store.js";
-import { StateManager } from "../state/manager.js";
+import { BookWriteLockError, StateManager } from "../state/manager.js";
 import { commitAtomicFileSet, type AtomicFileWrite } from "../utils/atomic-file-set.js";
 import { runInWorkMutationQueue, withWorkMutationScope } from "../utils/work-mutation-scope.js";
 import {
@@ -21,6 +21,7 @@ import type { TranscriptEvent, WorkCheckpointRef } from "./session-transcript-sc
 import {
   buildWorkCheckpoint,
   loadWorkCheckpoint,
+  workCheckpointBlobPath,
   workCheckpointDigest,
   type WorkCheckpoint,
 } from "./work-checkpoint.js";
@@ -29,7 +30,8 @@ export type SessionRewindErrorCode =
   | "SESSION_NOT_FOUND"
   | "REWIND_TARGET_NOT_FOUND"
   | "REWIND_TARGET_STALE"
-  | "REWIND_WORK_UNAVAILABLE";
+  | "REWIND_WORK_UNAVAILABLE"
+  | "REWIND_WORK_BUSY";
 
 export interface SessionRewindTarget {
   readonly requestId?: string;
@@ -71,6 +73,8 @@ export interface SessionRewindPlan {
 
 export interface SessionRewindResult extends SessionRewindPlan {
   readonly workRestored: boolean;
+  /** Where the replaced and deleted files were copied before restoring. */
+  readonly backupPath?: string;
 }
 
 export class SessionRewindError extends Error {
@@ -97,6 +101,28 @@ interface WorkRestore {
   readonly baselineRef: WorkCheckpointRef;
   readonly writes: AtomicFileWrite[];
   readonly deletes: string[];
+}
+
+const BACKUPS_DIR = join(".inkos", "rewind-backups");
+
+/**
+ * Edits made while a request ran cannot be told apart from the request's own
+ * changes, so every file the restore replaces or deletes is copied first.
+ */
+async function backupTouchedFiles(projectRoot: string, sessionId: string, restore: WorkRestore): Promise<string | undefined> {
+  const touched: string[] = [];
+  for (const path of [...restore.writes.map((write) => write.relativePath), ...restore.deletes]) {
+    if (await exists(join(projectRoot, path))) touched.push(path);
+  }
+  if (touched.length === 0) return undefined;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const backupPath = join(BACKUPS_DIR, `${stamp}-${sessionId}`);
+  for (const path of touched) {
+    const target = join(projectRoot, backupPath, path);
+    await mkdir(dirname(target), { recursive: true });
+    await copyFile(join(projectRoot, path), target);
+  }
+  return backupPath;
 }
 
 function requestRecords(events: ReadonlyArray<TranscriptEvent>): RequestRecord[] {
@@ -156,7 +182,17 @@ function changedSourcePaths(before: WorkCheckpoint | null, after: WorkCheckpoint
     .sort();
 }
 
-/** Find registered bytes for a source path whose content had this checksum. */
+async function readVerified(path: string, checksum: string): Promise<Buffer | undefined> {
+  try {
+    const bytes = await readFile(path);
+    return sha256(bytes) === checksum ? bytes : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/** Find stored bytes for a source path whose content had this checksum. */
 async function registeredBytes(
   projectRoot: string,
   manifest: WorkManifest,
@@ -167,15 +203,11 @@ async function registeredBytes(
   for (const artifact of manifest.artifacts) {
     for (const revision of artifact.revisions) {
       if (revision.checksum !== checksum || revision.path !== workPath || !revision.snapshotPath) continue;
-      try {
-        const bytes = await readFile(join(workDirectory(projectRoot, manifest.id), revision.snapshotPath));
-        if (sha256(bytes) === checksum) return bytes;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
+      const bytes = await readVerified(join(workDirectory(projectRoot, manifest.id), revision.snapshotPath), checksum);
+      if (bytes) return bytes;
     }
   }
-  return undefined;
+  return readVerified(workCheckpointBlobPath(projectRoot, manifest.id, checksum), checksum);
 }
 
 /** Rebuild manifest fields and revision statuses exactly as the checkpoint recorded them. */
@@ -344,6 +376,12 @@ export async function applySessionRewind(
     readonly target: SessionRewindTarget;
     readonly restoreWork: boolean;
     readonly expectedRequestIds?: ReadonlyArray<string>;
+    /**
+     * Host knowledge of live work on the Work outside this session, such as
+     * another session's running reply. Transcripts alone cannot tell a running
+     * request from one whose process died.
+     */
+    readonly isWorkBusy?: (workId: string) => boolean | Promise<boolean>;
   },
 ): Promise<SessionRewindResult> {
   const events = await readTranscriptEvents(projectRoot, sessionId);
@@ -356,27 +394,43 @@ export async function applySessionRewind(
 
   let { work } = await planWork(projectRoot, events, range);
   let restoredWork: WorkCheckpointRef | undefined;
+  let backupPath: string | undefined;
   if (input.restoreWork && work.status === "unavailable") {
     throw new SessionRewindError("REWIND_WORK_UNAVAILABLE", "The work files cannot be restored for this rewind.", work);
   }
   if (input.restoreWork && work.status === "available") {
-    await withWorkLock(projectRoot, work.workId, async () => {
-      const lockedEvents = await readTranscriptEvents(projectRoot, sessionId);
-      const lockedRange = resolveRange(lockedEvents, input.target);
-      if (!sameRequests(lockedRange.map((record) => record.requestId), requestIds)) throw stale();
-      const locked = await planWork(projectRoot, lockedEvents, lockedRange);
-      if (locked.work.status !== "available" || !locked.restore) {
-        throw new SessionRewindError("REWIND_WORK_UNAVAILABLE", "The work files cannot be restored for this rewind.", locked.work);
-      }
-      await commitAtomicFileSet({ rootDir: projectRoot, writes: locked.restore.writes, deletes: locked.restore.deletes });
-      work = locked.work;
-      restoredWork = locked.restore.baselineRef;
-    });
+    const workId = work.workId;
+    const busy = () => new SessionRewindError(
+      "REWIND_WORK_BUSY", "Other work on this Work is still running. Wait for it to finish before restoring files.", work,
+    );
+    if (await input.isWorkBusy?.(workId)) throw busy();
+    try {
+      await withWorkLock(projectRoot, workId, async () => {
+        const lockedEvents = await readTranscriptEvents(projectRoot, sessionId);
+        const lockedRange = resolveRange(lockedEvents, input.target);
+        if (!sameRequests(lockedRange.map((record) => record.requestId), requestIds)) throw stale();
+        const locked = await planWork(projectRoot, lockedEvents, lockedRange);
+        if (locked.work.status !== "available" || !locked.restore) {
+          throw new SessionRewindError("REWIND_WORK_UNAVAILABLE", "The work files cannot be restored for this rewind.", locked.work);
+        }
+        if (await input.isWorkBusy?.(workId)) throw busy();
+        backupPath = await backupTouchedFiles(projectRoot, sessionId, locked.restore);
+        await commitAtomicFileSet({ rootDir: projectRoot, writes: locked.restore.writes, deletes: locked.restore.deletes });
+        work = locked.work;
+        restoredWork = locked.restore.baselineRef;
+      });
+    } catch (error) {
+      if (error instanceof BookWriteLockError) throw busy();
+      throw error;
+    }
   }
 
   await appendTranscriptEvents(projectRoot, sessionId, ({ events: latest, nextSeq }) => {
     const latestIds = resolveRange(latest, input.target).map((record) => record.requestId);
-    if (!sameRequests(latestIds, requestIds)) throw stale();
+    // Once files are restored the rewind must be recorded. A request that
+    // started meanwhile stays: only the planned requests are retracted.
+    const planned = restoredWork ? latestIds.slice(0, requestIds.length) : latestIds;
+    if (!sameRequests(planned, requestIds)) throw stale();
     return [{
       type: "requests_rewound",
       version: 1,
@@ -386,6 +440,7 @@ export async function applySessionRewind(
       targetRequestId: requestIds[0]!,
       requestIds,
       ...(restoredWork ? { restoredWork } : {}),
+      ...(backupPath ? { backupPath } : {}),
     }];
   });
 
@@ -396,5 +451,6 @@ export async function applySessionRewind(
     turnCount: range.filter((record) => record.visibleUser).length,
     work,
     workRestored: restoredWork !== undefined,
+    ...(backupPath ? { backupPath } : {}),
   };
 }

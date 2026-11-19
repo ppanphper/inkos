@@ -1483,6 +1483,15 @@ export function evictAgentCache(sessionId: string): boolean {
   return deleted;
 }
 
+/** Whether a turn in another session of this process is running against the Work. */
+export function hasActiveAgentTurnOnWork(projectRoot: string, workId: string, excludeSessionId?: string): boolean {
+  for (const entry of agentCache.values()) {
+    if (entry.projectRoot !== projectRoot || entry.sessionId === excludeSessionId) continue;
+    if (entry.currentEpisode && (entry.workId ?? entry.bookId) === workId) return true;
+  }
+  return false;
+}
+
 /** Abort an active cached pi-agent session and evict it from cache. */
 export function abortAgentSession(projectRoot: string, sessionId: string): boolean {
   let aborted = false;

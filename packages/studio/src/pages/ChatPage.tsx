@@ -689,7 +689,19 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
     await sendComposed(text);
   };
 
-  const rewindErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+  const rewindErrorMessage = (error: unknown) => {
+    const code = (error as { payload?: { error?: { code?: string } } }).payload?.error?.code;
+    const known: Record<string, [string, string]> = {
+      REWIND_TARGET_STALE: ["对话在预览之后有了变化，请重新操作。", "The conversation changed after the preview. Try again."],
+      REWIND_TARGET_NOT_FOUND: ["这条消息已不在对话中，请刷新后再试。", "This message is no longer in the conversation. Refresh and try again."],
+      REWIND_WORK_UNAVAILABLE: ["作品文件无法安全回退，可以只撤回对话。", "Work files cannot be restored safely. You can rewind the conversation only."],
+      REWIND_WORK_BUSY: ["同一作品还有其他回复或任务在运行，请等它完成后再回退文件，或只撤回对话。", "Something else is still running on this work. Wait for it to finish before restoring files, or rewind the conversation only."],
+      SESSION_BUSY: ["当前会话仍在运行，请等待完成或先停止。", "This session is still running. Wait for it to finish or stop it first."],
+    };
+    const message = code ? known[code] : undefined;
+    if (message) return isZh ? message[0] : message[1];
+    return error instanceof Error ? error.message : String(error);
+  };
 
   const finishRewind = async (
     mode: "edit" | "retract", target: RewindTarget, plan: RewindPlan | null, restoreWork: boolean, text?: string,
