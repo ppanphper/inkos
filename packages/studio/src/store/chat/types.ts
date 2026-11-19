@@ -1,4 +1,4 @@
-import type { ActionPayload, ActionSource, PlayMode, RequestedIntent, SessionKind } from "@actalk/inkos-core";
+import type { ActionPayload, ActionSource, PlayMode, RequestedIntent, SessionKind, SessionRewindPlan, SessionRewindResult, SessionRewindTarget } from "@actalk/inkos-core";
 import type { StudioChatRequestSnapshot, StudioCompletionStatus, ToolExecution, SendMessageOptions, FailedSendRecord } from "../../shared/session-request";
 export type { ToolExecution, PipelineStage, SendMessageOptions, FailedSendRecord, ChatAttachmentPayload } from "../../shared/session-request";
 
@@ -26,6 +26,24 @@ export interface Message {
   readonly toolCall?: ToolCall;
   readonly toolExecutions?: ToolExecution[];
   readonly parts?: MessagePart[];              // chronological parts for interleaved rendering
+  // 用户消息所属的请求：编辑或撤回时用它定位。服务端恢复的消息带 requestId，
+  // 本页刚发出的消息只有 clientRequestId。failed/pending 的请求不在模型上下文中。
+  readonly requestId?: string;
+  readonly clientRequestId?: string;
+  readonly requestStatus?: MessageRequestStatus;
+  /** The exact text the author typed, when the displayed content adds an attachment summary. */
+  readonly editText?: string;
+}
+
+export type MessageRequestStatus = "committed" | "failed" | "pending";
+export type RewindTarget = SessionRewindTarget;
+export type RewindPlan = SessionRewindPlan;
+export type RewindResult = SessionRewindResult;
+
+export interface EditingMessage {
+  readonly sessionId: string;
+  readonly messageIndex: number;
+  readonly target: RewindTarget;
 }
 
 export interface SessionMessage {
@@ -35,6 +53,9 @@ export interface SessionMessage {
   readonly thinking?: string;
   readonly toolExecutions?: ReadonlyArray<ToolExecution>;
   readonly timestamp: number;
+  readonly requestId?: string;
+  readonly clientRequestId?: string;
+  readonly requestStatus?: MessageRequestStatus;
 }
 
 export interface SessionSummary {
@@ -156,6 +177,8 @@ export interface MessageState {
   sessionIdsByBook: Record<string, ReadonlyArray<string>>;
   activeSessionId: string | null;
   input: string;
+  /** The user message being edited in the composer; sending replaces it and every later turn. */
+  editingMessage: EditingMessage | null;
   selectedModel: string | null;
   selectedService: string | null;
 }
@@ -180,7 +203,7 @@ export type ChatState = MessageState & CreateState;
 export interface MessageActions {
   activateSession: (sessionId: string | null) => void;
   setInput: (text: string) => void;
-  addUserMessage: (sessionId: string, content: string) => void;
+  addUserMessage: (sessionId: string, content: string, request?: { readonly clientRequestId?: string; readonly editText?: string }) => void;
   appendStreamChunk: (sessionId: string, text: string, streamTs: number) => void;
   finalizeStream: (sessionId: string, streamTs: number, content: string, toolCall?: ToolCall) => void;
   replaceStreamWithError: (sessionId: string, streamTs: number, errorMsg: string) => void;
@@ -199,6 +222,15 @@ export interface MessageActions {
   // User stop aborts the complete workflow; navigation uses chat scope so a
   // background production task can keep running after its Pi turn is cancelled.
   abortSession: (sessionId: string, scope?: "all" | "chat") => Promise<void>;
+  beginEditMessage: (sessionId: string, messageIndex: number) => void;
+  cancelEditMessage: () => void;
+  previewRewind: (sessionId: string, target: RewindTarget, retryDelayMs?: number) => Promise<RewindPlan>;
+  // 撤回目标消息及其之后的全部回合；restoreWork 时作品文件一起回到该消息发送前。
+  rewindSession: (sessionId: string, target: RewindTarget, options: {
+    readonly restoreWork: boolean;
+    readonly expectedRequestIds?: ReadonlyArray<string>;
+    readonly retryDelayMs?: number;
+  }) => Promise<RewindResult | null>;
   setSelectedModel: (model: string, service: string) => void;
 }
 

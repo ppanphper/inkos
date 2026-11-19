@@ -29,6 +29,7 @@ export const STUDIO_SSE_EVENTS = [
   "agent:error",
   "session:title",
   "session:target",
+  "work:restored",
   "audit:start",
   "audit:complete",
   "audit:error",

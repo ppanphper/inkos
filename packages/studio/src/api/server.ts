@@ -28,7 +28,13 @@ import {
   transitionSessionToWork,
   SessionAlreadyBoundError,
   abortAgentSession,
+  evictAgentCache,
   runAgentSession,
+  planSessionRewind,
+  applySessionRewind,
+  SessionRewindError,
+  captureWorkCheckpoint,
+  type SessionRewindTarget,
   resolveServicePreset,
   resolveServiceProviderFamily,
   resolveServiceModelsBaseUrl,
@@ -4558,6 +4564,72 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
     return c.json({ ok: true, aborted });
   });
 
+  const parseRewindTarget = async (c: { req: { json: <T>() => Promise<T> } }) => {
+    const body = await c.req.json<{
+      requestId?: unknown; clientRequestId?: unknown; restoreWork?: unknown; expectedRequestIds?: unknown;
+    }>().catch(() => ({} as Record<string, unknown>));
+    const id = (value: unknown) => typeof value === "string" && value.trim() ? value.trim().slice(0, 128) : undefined;
+    const target: SessionRewindTarget = {
+      ...(id(body.requestId) ? { requestId: id(body.requestId) } : {}),
+      ...(id(body.clientRequestId) ? { clientRequestId: id(body.clientRequestId) } : {}),
+    };
+    if (!target.requestId && !target.clientRequestId) {
+      throw new ApiError(400, "REWIND_TARGET_REQUIRED", "requestId or clientRequestId is required");
+    }
+    const expectedRequestIds = Array.isArray(body.expectedRequestIds)
+      && body.expectedRequestIds.every((value) => typeof value === "string")
+      ? body.expectedRequestIds as string[] : undefined;
+    return { target, restoreWork: body.restoreWork === true, expectedRequestIds };
+  };
+
+  // 撤回只在会话空闲时进行：运行中的聊天轮或后台任务还会继续写记录和作品文件。
+  const assertSessionIdleForRewind = async (sessionId: string) => {
+    const running = chatRequests.get(sessionId)?.snapshot.status === "running"
+      || Boolean(await findRunningTaskController(sessionId));
+    if (running) {
+      throw new ApiError(409, "SESSION_BUSY", "当前会话仍在运行，请等待完成或先停止，再撤回消息。");
+    }
+  };
+
+  const rewindErrorResponse = (c: { json: (body: unknown, status: 404 | 409) => Response }, error: unknown) => {
+    if (!(error instanceof SessionRewindError)) throw error;
+    const status = error.code === "SESSION_NOT_FOUND" || error.code === "REWIND_TARGET_NOT_FOUND" ? 404 : 409;
+    return c.json({ error: { code: error.code, message: error.message }, ...(error.work ? { work: error.work } : {}) }, status);
+  };
+
+  app.post("/api/v1/sessions/:sessionId/rewind/preview", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    const { target } = await parseRewindTarget(c);
+    // 刚停止的请求在收尾前还没写入结束检查点，预览要等它结束。
+    await assertSessionIdleForRewind(sessionId);
+    try {
+      return c.json({ plan: await planSessionRewind(root, sessionId, target) });
+    } catch (error) {
+      return rewindErrorResponse(c, error);
+    }
+  });
+
+  app.post("/api/v1/sessions/:sessionId/rewind", async (c) => {
+    const sessionId = c.req.param("sessionId");
+    const input = await parseRewindTarget(c);
+    await assertSessionIdleForRewind(sessionId);
+    let result;
+    try {
+      result = await applySessionRewind(root, sessionId, input);
+    } catch (error) {
+      return rewindErrorResponse(c, error);
+    }
+    evictAgentCache(sessionId);
+    // 被撤回的最后一轮不再提供重试入口。
+    chatRequests.delete(sessionId);
+    await chatRequestStore.delete(sessionId);
+    if (result.workRestored && result.work.status === "available") {
+      broadcast("work:restored", { sessionId, workId: result.work.workId, bookId: result.work.workId });
+    }
+    const session = await loadBookSession(root, sessionId);
+    return c.json({ result, session });
+  });
+
   app.use("/api/v1/agent", async (c, next) => {
     if (c.req.method !== "POST") return next();
     const body = await c.req.json().catch(() => ({}));
@@ -4978,6 +5050,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         const taskController = new AbortController();
         activeConfirmedTasks.set(taskId, taskController);
         let pendingBookId: string | null = null;
+        let taskStartCheckpoint: Awaited<ReturnType<typeof captureWorkCheckpoint>>;
         try {
           // 预留成功后再走快照检查：本进程的任务都会占预留名额，这里防的是
           // 旧进程遗留的运行中快照（loadReconciledTaskSnapshot 会把它对账成
@@ -5006,11 +5079,21 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           const originalInstruction = confirmedRequestInstruction(
             await readTranscriptEvents(root, bookSession.sessionId), confirmedIntent, instruction,
           );
+          // 任务改动的文件归入任务结束后的那次请求：它以任务开始前的作品状态
+          // 作为起点，撤回时才能把任务写入的章节和状态一起回退。
+          const taskWorkId = bookSession.workId ?? bookSession.bookId;
+          taskStartCheckpoint = taskWorkId
+            ? await captureWorkCheckpoint(root, taskWorkId).catch(() => undefined)
+            : undefined;
           await appendSessionMessagesUnlessDeleted(root, bookSession.sessionId, [{
             role: "user",
             content: instruction,
             timestamp: Date.now(),
-          }], instruction, { sessionKind });
+          }], instruction, {
+            sessionKind,
+            ...(sourceRequestId ? { clientRequestId: sourceRequestId } : {}),
+            ...(taskStartCheckpoint ? { startWorkCheckpoint: taskStartCheckpoint } : {}),
+          });
 
           const confirmedOutcome = await executeConfirmedProductionAction({
             pipeline,
@@ -5072,6 +5155,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
           const continuation = await runAgentSession({
             onWorkTransition: publishExecutionTarget,
             signal: taskController.signal,
+            ...(taskStartCheckpoint ? { workCheckpointAtStart: taskStartCheckpoint } : {}),
             model,
             apiKey: agentApiKey,
             stream: pipelineClient.stream,
@@ -5209,7 +5293,10 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
                 configuredEntry?.service ?? reqService ?? config.llm.provider,
                 reqModel ?? config.llm.model,
               ),
-            ], "", manualToolAppendOptions(sessionKind, error.exec)).catch(() => undefined);
+            ], "", {
+              ...manualToolAppendOptions(sessionKind, error.exec),
+              ...(taskStartCheckpoint ? { startWorkCheckpoint: taskStartCheckpoint } : {}),
+            }).catch(() => undefined);
             await refreshBookSessionFromTranscript().catch(() => undefined);
           }
           broadcast("agent:error", { instruction, activeBookId: agentBookId, sessionId: bookSession.sessionId, sessionKind, error: message });
@@ -5238,6 +5325,7 @@ export function createStudioServer(initialConfig: ProjectConfig, root: string, o
         {
           signal: chatRequest?.controller.signal,
           baselineWork: chatRequest?.snapshot.baselineWork,
+          ...(sourceRequestId ? { clientRequestId: sourceRequestId } : {}),
           onWorkTransition: publishExecutionTarget,
           model,
           apiKey: agentApiKey,

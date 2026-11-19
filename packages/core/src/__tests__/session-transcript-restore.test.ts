@@ -1192,7 +1192,7 @@ describe("session transcript restore", () => {
 
     const session = await deriveBookSessionFromTranscript(projectRoot, "s1");
 
-    expect(session?.messages).toEqual([{ role: "user", content: "你好", timestamp: 3 }]);
+    expect(session?.messages).toEqual([{ role: "user", content: "你好", requestId: "r1", requestStatus: "committed", timestamp: 3 }]);
   });
 
   it("从 transcript 派生 BookSession UI 视图", async () => {

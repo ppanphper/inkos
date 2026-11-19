@@ -63,6 +63,12 @@ export const InteractionMessageSchema = z.object({
   thinking: z.string().optional(),
   toolExecutions: z.array(ToolExecutionSchema).optional(),
   timestamp: z.number().int().nonnegative(),
+  // User messages restored from a transcript identify their request, so a
+  // client can edit or rewind them; failed and pending requests are not part
+  // of the model context.
+  requestId: z.string().min(1).optional(),
+  clientRequestId: z.string().min(1).optional(),
+  requestStatus: z.enum(["committed", "failed", "pending"]).optional(),
 }).strict();
 
 export type InteractionMessage = z.infer<typeof InteractionMessageSchema>;

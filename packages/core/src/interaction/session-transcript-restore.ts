@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import { readTranscriptEvents } from "./session-transcript.js";
+import { readTranscriptEvents, rewoundRequestIds } from "./session-transcript.js";
 import {
   BookSessionSchema,
   type BookSession,
@@ -7,7 +7,7 @@ import {
   type ToolExecution,
   type PlayMode,
 } from "./session.js";
-import type { MessageEvent, SessionKind, TranscriptEvent } from "./session-transcript-schema.js";
+import type { MessageEvent, RequestCommittedEvent, SessionKind, TranscriptEvent } from "./session-transcript-schema.js";
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object";
@@ -311,6 +311,7 @@ export function adaptRestoredAgentMessagesForModel(
 }
 
 export function committedMessageEvents(events: TranscriptEvent[], sessionKind?: SessionKind): MessageEvent[] {
+  const rewound = rewoundRequestIds(events);
   const requestKinds = new Map(
     events
       .filter((event) => event.type === "request_started")
@@ -318,7 +319,8 @@ export function committedMessageEvents(events: TranscriptEvent[], sessionKind?: 
   );
   const committed = new Set(
     events
-      .filter((event) => event.type === "request_committed")
+      .filter((event): event is RequestCommittedEvent => event.type === "request_committed")
+      .filter((event) => !rewound.has(event.requestId))
       .filter((event) => {
         if (!sessionKind) return true;
         const kind = requestKinds.get(event.requestId);
@@ -332,8 +334,31 @@ export function committedMessageEvents(events: TranscriptEvent[], sessionKind?: 
     .sort((a, b) => a.seq - b.seq);
 }
 
+type RequestDisplayInfo = Pick<InteractionMessage, "requestId" | "clientRequestId" | "requestStatus">;
+
+function requestDisplayInfo(events: TranscriptEvent[]): Map<string, RequestDisplayInfo> {
+  const info = new Map<string, RequestDisplayInfo>();
+  for (const event of events) {
+    if (event.type === "request_started") {
+      info.set(event.requestId, {
+        requestId: event.requestId,
+        ...(event.clientRequestId ? { clientRequestId: event.clientRequestId } : {}),
+        requestStatus: "pending",
+      });
+    } else if (event.type === "request_committed" || event.type === "request_failed") {
+      const current = info.get(event.requestId);
+      if (current) info.set(event.requestId, {
+        ...current, requestStatus: event.type === "request_committed" ? "committed" : "failed",
+      });
+    }
+  }
+  return info;
+}
+
 function visibleMessageEvents(events: TranscriptEvent[]): MessageEvent[] {
+  const rewound = rewoundRequestIds(events);
   return events.flatMap((event): MessageEvent[] => {
+    if ("requestId" in event && rewound.has(event.requestId)) return [];
     if (event.type === "message" && event.visibility === "model") return [];
     if (event.type === "message") return [event];
     if (event.type !== "request_failed") return [];
@@ -451,7 +476,7 @@ function messageEventToInteractionMessage(
   event: MessageEvent,
   restoredToolExecutions?: ToolExecution[],
   restoredThinking?: ReadonlyArray<string>,
-  options: { suppressAssistantText?: boolean; suppressThinking?: boolean } = {},
+  options: { suppressAssistantText?: boolean; suppressThinking?: boolean; request?: RequestDisplayInfo } = {},
 ): InteractionMessage | null {
   const raw = event.message as Record<string, unknown>;
   if (!isObject(raw)) return null;
@@ -461,7 +486,7 @@ function messageEventToInteractionMessage(
     const input = event.display?.userInput;
     const content = input ? [input.text, "", input.language === "en" ? "Attachments:" : "附件：",
       ...input.attachments.map(attachment => `- ${attachment.filename}`)].join("\n") : textFromContent(raw.content);
-    return content ? { role: "user", content, timestamp: event.timestamp } : null;
+    return content ? { role: "user", content, timestamp: event.timestamp, ...options.request } : null;
   }
 
   if (event.role === "assistant") {
@@ -497,7 +522,10 @@ function messageEventToInteractionMessage(
   return null;
 }
 
-function messageEventsToInteractionMessages(events: MessageEvent[]): InteractionMessage[] {
+function messageEventsToInteractionMessages(
+  events: MessageEvent[],
+  requests: ReadonlyMap<string, RequestDisplayInfo> = new Map(),
+): InteractionMessage[] {
   type RestoredToolCall = {
     id: string;
     tool: string;
@@ -707,7 +735,9 @@ function messageEventsToInteractionMessages(events: MessageEvent[]): Interaction
     }
 
     clearPending();
-    const message = messageEventToInteractionMessage(event);
+    const message = messageEventToInteractionMessage(event, undefined, undefined, {
+      request: requests.get(event.requestId),
+    });
     if (message) messages.push(message);
   }
 
@@ -762,7 +792,7 @@ export async function deriveBookSessionFromTranscript(
 
   // Failed or interrupted requests remain visible to the author. Model replay
   // separately uses committedMessageEvents to avoid replaying unfinished calls.
-  const messages = messageEventsToInteractionMessages(visibleMessageEvents(events));
+  const messages = messageEventsToInteractionMessages(visibleMessageEvents(events), requestDisplayInfo(events));
 
   if (title === null) {
     title = firstUserMessageTitle(messages);

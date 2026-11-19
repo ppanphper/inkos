@@ -239,6 +239,9 @@ export function deserializeMessages(
         toolExecutions: toolExecutions?.map(normalizeToolExecution),
         timestamp: message.timestamp,
         parts: parts.length > 0 ? parts : undefined,
+        ...(message.requestId ? { requestId: message.requestId } : {}),
+        ...(message.clientRequestId ? { clientRequestId: message.clientRequestId } : {}),
+        ...(message.requestStatus ? { requestStatus: message.requestStatus } : {}),
       };
     });
 }

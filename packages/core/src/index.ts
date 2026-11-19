@@ -266,8 +266,27 @@ export {
   readTranscriptEvents,
   confirmedRequestInstruction,
   nextTranscriptSeq,
+  rewoundRequestIds,
+  sessionWorkIdFromEvents,
   transcriptPath,
 } from "./interaction/session-transcript.js";
+export {
+  applySessionRewind,
+  planSessionRewind,
+  SessionRewindError,
+  type SessionRewindErrorCode,
+  type SessionRewindFileChange,
+  type SessionRewindPlan,
+  type SessionRewindResult,
+  type SessionRewindTarget,
+  type SessionRewindUnavailableReason,
+  type SessionRewindWorkPlan,
+} from "./interaction/session-rewind.js";
+export {
+  captureWorkCheckpoint,
+  loadWorkCheckpoint,
+  type WorkCheckpoint,
+} from "./interaction/work-checkpoint.js";
 export {
   cleanRestoredAgentMessages,
   committedMessageEvents,
@@ -279,9 +298,11 @@ export {
   RequestCommittedEventSchema,
   RequestFailedEventSchema,
   RequestStartedEventSchema,
+  RequestsRewoundEventSchema,
   SessionCreatedEventSchema,
   SessionMetadataUpdatedEventSchema,
   TranscriptEventSchema,
+  WorkCheckpointRefSchema,
 } from "./interaction/session-transcript-schema.js";
 export type {
   TranscriptEvent,
@@ -289,6 +310,8 @@ export type {
   RequestCommittedEvent,
   RequestFailedEvent,
   RequestStartedEvent,
+  RequestsRewoundEvent,
+  WorkCheckpointRef,
   SessionCreatedEvent,
   SessionMetadataUpdatedEvent,
 } from "./interaction/session-transcript-schema.js";

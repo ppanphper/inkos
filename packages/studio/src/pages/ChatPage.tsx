@@ -3,7 +3,8 @@ import type { Theme } from "../hooks/use-theme";
 import type { TFunction } from "../hooks/use-i18n";
 import type { SSEMessage } from "../hooks/use-sse";
 import { fetchJson, postApi, useApi } from "../hooks/use-api";
-import type { ChatAttachmentPayload } from "../store/chat/types";
+import type { ChatAttachmentPayload, MessageRequestStatus, RewindPlan, RewindTarget } from "../store/chat/types";
+import { isOutsideConversation, rewindNeedsConfirmation, rewindTargetForMessage } from "../store/chat/rewind";
 import { chatSelectors, useChatStore } from "../store/chat";
 import type { ChatSessionKind } from "../store/chat";
 import { useServiceStore } from "../store/service";
@@ -19,6 +20,7 @@ import {
   ReasoningContent,
 } from "../components/ai-elements/reasoning";
 import { ChatMessage } from "../components/chat/ChatMessage";
+import { RewindDialog } from "../components/chat/RewindDialog";
 import { QuickActions } from "../components/chat/QuickActions";
 import { ToolExecutionSteps, type ProposedActionDetails } from "../components/chat/ToolExecutionSteps";
 import {
@@ -42,6 +44,8 @@ import {
   RotateCcw,
   Square,
   Plus,
+  Pencil,
+  Undo2,
 } from "lucide-react";
 import { Shimmer } from "../components/ai-elements/shimmer";
 import {
@@ -316,6 +320,20 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
   const sendMessage = useChatStore((s) => s.sendMessage);
   const retryLastSend = useChatStore((s) => s.retryLastSend);
   const abortSession = useChatStore((s) => s.abortSession);
+  const editingMessage = useChatStore((s) => s.editingMessage);
+  const beginEditMessage = useChatStore((s) => s.beginEditMessage);
+  const cancelEditMessage = useChatStore((s) => s.cancelEditMessage);
+  const previewRewind = useChatStore((s) => s.previewRewind);
+  const rewindSession = useChatStore((s) => s.rewindSession);
+  const [rewindDialog, setRewindDialog] = useState<{
+    readonly mode: "edit" | "retract";
+    readonly target: RewindTarget;
+    readonly plan: RewindPlan;
+    readonly text?: string;
+    readonly busy: boolean;
+    readonly error: string | null;
+  } | null>(null);
+  const [rewindError, setRewindError] = useState<string | null>(null);
   const setSelectedModel = useChatStore((s) => s.setSelectedModel);
   const loadSessionList = useChatStore((s) => s.loadSessionList);
   const createSession = useChatStore((s) => s.createSession);
@@ -648,13 +666,82 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
       : null);
   };
 
+  const activeEditing = editingMessage && editingMessage.sessionId === activeSessionId ? editingMessage : null;
+
   const onSend = async (text: string) => {
     if (!activeSessionId || !sessionMatchesRoute || creatingWorkSession) return;
     const hasPendingMessage = Boolean(text.trim()) || attachedFiles.length > 0;
     if (!hasPendingMessage) {
-      if (chatStreaming || loading) await abortSession(activeSessionId);
+      if (chatStreaming || loading) {
+        // 停止聊天回复后，被停止的消息原文回到输入框，方便改正后重发。
+        const stoppedIndex = chatStreaming ? messages.map((message) => message.role).lastIndexOf("user") : -1;
+        const sessionId = activeSessionId;
+        await abortSession(sessionId);
+        if (stoppedIndex >= 0 && !useChatStore.getState().input.trim()) beginEditMessage(sessionId, stoppedIndex);
+      }
       return;
     }
+    if (activeEditing) {
+      const edited = messages[activeEditing.messageIndex];
+      await startRewind("edit", activeEditing.target, edited?.requestStatus, text);
+      return;
+    }
+    await sendComposed(text);
+  };
+
+  const rewindErrorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+
+  const finishRewind = async (
+    mode: "edit" | "retract", target: RewindTarget, plan: RewindPlan | null, restoreWork: boolean, text?: string,
+  ) => {
+    if (!activeSessionId) return;
+    await rewindSession(activeSessionId, target, {
+      restoreWork,
+      ...(plan ? { expectedRequestIds: plan.requestIds } : {}),
+    });
+    if (mode === "edit" && text !== undefined) await sendComposed(text);
+  };
+
+  const startRewind = async (
+    mode: "edit" | "retract", target: RewindTarget, requestStatus: MessageRequestStatus | undefined, text?: string,
+  ) => {
+    if (!activeSessionId) return;
+    setRewindError(null);
+    let plan: RewindPlan | null = null;
+    try {
+      plan = await previewRewind(activeSessionId, target);
+    } catch (error) {
+      const code = (error as { payload?: { error?: { code?: string } } }).payload?.error?.code;
+      // 从未写入会话记录的消息不需要预览，直接从界面移除。
+      if (code !== "REWIND_TARGET_NOT_FOUND" || !target.clientRequestId || target.requestId) {
+        setRewindError(rewindErrorMessage(error));
+        return;
+      }
+    }
+    if (plan && rewindNeedsConfirmation(plan, mode, requestStatus)) {
+      setRewindDialog({ mode, target, plan, text, busy: false, error: null });
+      return;
+    }
+    try {
+      await finishRewind(mode, target, plan, false, text);
+    } catch (error) {
+      setRewindError(rewindErrorMessage(error));
+    }
+  };
+
+  const confirmRewind = async (restoreWork: boolean) => {
+    if (!rewindDialog) return;
+    setRewindDialog({ ...rewindDialog, busy: true, error: null });
+    try {
+      await finishRewind(rewindDialog.mode, rewindDialog.target, rewindDialog.plan, restoreWork, rewindDialog.text);
+      setRewindDialog(null);
+    } catch (error) {
+      setRewindDialog({ ...rewindDialog, busy: false, error: rewindErrorMessage(error) });
+    }
+  };
+
+  const sendComposed = async (text: string) => {
+    if (!activeSessionId) return;
     const requestedSkills = selectedSkillIdsForSend(selectedSkillIds);
     autoScrollPinnedRef.current = true;
     const attachments = await serializeChatAttachments(attachedFiles);
@@ -918,7 +1005,47 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
               <div key={`${msg.timestamp}-${i}`}>
                 {msg.role === "user" ? (
                   /* User message */
-                  <ChatMessage role="user" kind={msg.kind} content={msg.content} timestamp={msg.timestamp} theme={theme} />
+                  <div className="group/user flex flex-col items-end gap-1">
+                    <ChatMessage role="user" kind={msg.kind} content={msg.content} timestamp={msg.timestamp} theme={theme} />
+                    {(() => {
+                      const outside = isOutsideConversation(msg, loading);
+                      const target = loading || activeEditing?.messageIndex === i ? null : rewindTargetForMessage(msg);
+                      if (!outside && !target) return null;
+                      const actionClass = "flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+                      return (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          {outside ? <span>{isZh ? "未计入对话" : "Not in the conversation"}</span> : null}
+                          {target ? (
+                            <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/user:opacity-100 focus-within:opacity-100 [@media(hover:none)]:opacity-100">
+                              <button
+                                type="button"
+                                className={actionClass}
+                                title={isZh ? "编辑" : "Edit"}
+                                aria-label={isZh ? "编辑这条消息" : "Edit this message"}
+                                onClick={() => {
+                                  if (!activeSessionId) return;
+                                  setRewindError(null);
+                                  beginEditMessage(activeSessionId, i);
+                                  textareaRef.current?.focus();
+                                }}
+                              >
+                                <Pencil size={14} />
+                              </button>
+                              <button
+                                type="button"
+                                className={actionClass}
+                                title={isZh ? "撤回" : "Rewind"}
+                                aria-label={isZh ? "撤回这条消息" : "Rewind this message"}
+                                onClick={() => void startRewind("retract", target, msg.requestStatus)}
+                              >
+                                <Undo2 size={14} />
+                              </button>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
+                  </div>
                 ) : msg.parts && msg.parts.length > 0 ? (
                   /* Assistant message — parts-based rendering (chronological) */
                   /* Merge consecutive utility tool parts into one group */
@@ -1095,6 +1222,26 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
                   event.currentTarget.value = "";
                 }}
               />
+              {activeEditing ? (
+                <div className="flex items-center justify-between gap-2 border-b border-border/20 px-3 py-2 text-sm text-muted-foreground">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <Pencil size={13} className="shrink-0" />
+                    <span className="truncate">{isZh ? "编辑消息：发送后替换原消息及之后的对话" : "Editing: sending replaces this message and everything after it"}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setRewindError(null); cancelEditMessage(); }}
+                    className="rounded-md p-1 hover:bg-muted hover:text-foreground"
+                    aria-label={isZh ? "取消编辑" : "Cancel editing"}
+                    title={isZh ? "取消编辑" : "Cancel editing"}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ) : null}
+              {rewindError ? (
+                <div role="alert" className="border-b border-border/20 px-3 py-2 text-sm leading-6 text-destructive">{rewindError}</div>
+              ) : null}
               {selectedSkills.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5 border-b border-border/20 px-3 py-2">
                   {selectedSkills.map((skill) => (
@@ -1295,6 +1442,16 @@ export function ChatPage({ activeBookId, activeWorkId, workProfileId, mode = act
         />
       )}
       <ProjectArtifactDrawer />
+      <RewindDialog
+        open={rewindDialog !== null}
+        isZh={isZh}
+        mode={rewindDialog?.mode ?? "retract"}
+        plan={rewindDialog?.plan ?? null}
+        busy={rewindDialog?.busy ?? false}
+        error={rewindDialog?.error ?? null}
+        onConfirm={(restoreWork) => void confirmRewind(restoreWork)}
+        onCancel={() => setRewindDialog(null)}
+      />
     </div>
   );
 }

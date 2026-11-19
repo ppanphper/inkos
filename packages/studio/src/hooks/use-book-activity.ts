@@ -3,6 +3,7 @@ import type { SSEMessage } from "./use-sse";
 const START_EVENTS = new Set(["write:start", "draft:start"]);
 const TERMINAL_EVENTS = new Set(["write:complete", "write:error", "draft:complete", "draft:error"]);
 const BOOK_REFRESH_EVENTS = new Set([
+  "work:restored",
   "write:complete",
   "write:error",
   "draft:complete",
@@ -16,6 +17,7 @@ const BOOK_REFRESH_EVENTS = new Set([
 ]);
 
 const BOOK_COLLECTION_REFRESH_EVENTS = new Set([
+  "work:restored",
   "book:created",
   "book:deleted",
   "book:error",

@@ -6,6 +6,13 @@ export type { PlayMode };
 export const TranscriptRoleSchema = z.enum(["user", "assistant", "toolResult", "system"]);
 export type TranscriptRole = z.infer<typeof TranscriptRoleSchema>;
 
+/** Content-addressed Work state recorded at request boundaries; see work-checkpoint.ts. */
+export const WorkCheckpointRefSchema = z.object({
+  workId: z.string().min(1),
+  digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+}).strict();
+export type WorkCheckpointRef = z.infer<typeof WorkCheckpointRefSchema>;
+
 const BaseEventSchema = z.object({
   version: z.literal(1),
   sessionId: z.string().min(1),
@@ -49,17 +56,29 @@ export const RequestStartedEventSchema = BaseEventSchema.extend({
   profileId: z.string().min(1).optional(),
   workId: z.string().min(1).nullable().optional(),
   input: z.string(),
+  clientRequestId: z.string().min(1).max(128).optional(),
+  workCheckpoint: WorkCheckpointRefSchema.optional(),
 });
 
 export const RequestCommittedEventSchema = BaseEventSchema.extend({
   type: z.literal("request_committed"),
   requestId: z.string().min(1),
+  workCheckpoint: WorkCheckpointRefSchema.optional(),
 });
 
 export const RequestFailedEventSchema = BaseEventSchema.extend({
   type: z.literal("request_failed"),
   requestId: z.string().min(1),
   error: z.string(),
+  workCheckpoint: WorkCheckpointRefSchema.optional(),
+});
+
+/** Retract a request and every later request without rewriting earlier lines. */
+export const RequestsRewoundEventSchema = BaseEventSchema.extend({
+  type: z.literal("requests_rewound"),
+  targetRequestId: z.string().min(1),
+  requestIds: z.array(z.string().min(1)).min(1),
+  restoredWork: WorkCheckpointRefSchema.optional(),
 });
 
 export const MessageEventSchema = BaseEventSchema.extend({
@@ -94,6 +113,7 @@ export const TranscriptEventSchema = z.discriminatedUnion("type", [
   RequestStartedEventSchema,
   RequestCommittedEventSchema,
   RequestFailedEventSchema,
+  RequestsRewoundEventSchema,
   MessageEventSchema,
 ]);
 
@@ -102,5 +122,6 @@ export type SessionMetadataUpdatedEvent = z.infer<typeof SessionMetadataUpdatedE
 export type RequestStartedEvent = z.infer<typeof RequestStartedEventSchema>;
 export type RequestCommittedEvent = z.infer<typeof RequestCommittedEventSchema>;
 export type RequestFailedEvent = z.infer<typeof RequestFailedEventSchema>;
+export type RequestsRewoundEvent = z.infer<typeof RequestsRewoundEventSchema>;
 export type MessageEvent = z.infer<typeof MessageEventSchema>;
 export type TranscriptEvent = z.infer<typeof TranscriptEventSchema>;

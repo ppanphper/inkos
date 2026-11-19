@@ -266,6 +266,18 @@ export async function changedWorkSourcePaths(projectRoot: string, workId: string
     .filter(path => before.get(path) !== after.get(path)).sort();
 }
 
+/** Files under a Work source directory, relative to it; lock and SQLite sidecar files are excluded. */
+export async function listWorkSourceFiles(sourceRoot: string): Promise<string[]> {
+  try { await lstat(sourceRoot); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return []; throw error; }
+  return listFiles(sourceRoot);
+}
+
+/** Bytes as revisions register them: SQLite files are read through a consistent backup. */
+export function readWorkSourceBytes(path: string): Promise<Buffer> {
+  return readArtifactBytes(path);
+}
+
 function revisionSnapshotPath(artifactId: string, revisionId: string, sourcePath: string): string {
   const extension = extname(sourcePath).toLowerCase();
   return toPosixPath(join("revisions", artifactId, `${revisionId}${extension}`));
