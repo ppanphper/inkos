@@ -43,7 +43,8 @@ import {
   adaptRestoredAgentMessagesForModel,
   restoreAgentMessagesFromTranscript,
 } from "../interaction/session-transcript-restore.js";
-import type { TranscriptEvent, TranscriptRole } from "../interaction/session-transcript-schema.js";
+import type { TranscriptEvent, TranscriptRole, WorkCheckpointRef } from "../interaction/session-transcript-schema.js";
+import { captureWorkCheckpoint } from "../interaction/work-checkpoint.js";
 import type { PlayMode, SessionKind } from "../interaction/session.js";
 import type { BookSession } from "../interaction/session.js";
 import { transitionSessionToWork } from "../interaction/book-session-store.js";
@@ -89,6 +90,10 @@ export interface AgentSessionConfig {
   workId?: string | null;
   /** Original request's Work revision inventory, retained by a trusted retry host. */
   baselineWork?: WorkManifest | null;
+  /** Host request identity, recorded so a client can later edit or rewind this message. */
+  clientRequestId?: string;
+  /** Work state before host-run work that this turn reports on, e.g. a confirmed production task. */
+  workCheckpointAtStart?: WorkCheckpointRef;
   /** Play interaction mode chosen by the player at launch (guided = choice-only, open = free text). */
   playMode?: PlayMode;
   /** Where this turn came from. Button/slash turns can execute confirmed production actions. */
@@ -438,11 +443,16 @@ async function runInAgentSessionQueue<T>(
   }
 }
 
+/** Changes whenever the replayable history changes: a new commit or a rewind. */
 async function latestCommittedSeq(projectRoot: string, sessionId: string): Promise<number> {
   const events = await readTranscriptEvents(projectRoot, sessionId);
   return events
-    .filter((event) => event.type === "request_committed")
+    .filter((event) => event.type === "request_committed" || event.type === "requests_rewound")
     .reduce((max, event) => Math.max(max, event.seq), 0);
+}
+
+async function captureSessionWorkCheckpoint(projectRoot: string, workId: string | null | undefined): Promise<WorkCheckpointRef | undefined> {
+  return workId ? captureWorkCheckpoint(projectRoot, workId) : undefined;
 }
 
 function transcriptRoleForMessage(message: AgentMessage): TranscriptRole | null {
@@ -1205,6 +1215,8 @@ async function runAgentSessionUnlocked(
   // ----- Prepare transcript persistence -----
   const requestId = randomUUID();
   await ensureSessionCreatedEvent(projectRoot, sessionId, bookId, sessionKind, cached.profileId, cached.workId);
+  const startWorkCheckpoint = config.workCheckpointAtStart
+    ?? await captureSessionWorkCheckpoint(projectRoot, cached.workId).catch(() => undefined);
   await appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
     type: "request_started",
     version: 1,
@@ -1216,6 +1228,8 @@ async function runAgentSessionUnlocked(
     profileId: cached.profileId,
     workId: cached.workId,
     input: promptMessage,
+    ...(config.clientRequestId ? { clientRequestId: config.clientRequestId } : {}),
+    ...(startWorkCheckpoint ? { workCheckpoint: startWorkCheckpoint } : {}),
   }));
   if (config.resumeAction) {
     if (promptMessage.trim()) {
@@ -1385,6 +1399,8 @@ async function runAgentSessionUnlocked(
       ?? (!cached.pendingWorkTransition && cached.completedPlayScene === undefined && !completion
         ? "Agent ended without an explicit completion result." : undefined)
       ?? (!turnHasObservableOutcome(turnMessages) ? "Agent returned no text or tool result." : undefined);
+    // A missing checkpoint only disables file rewind; it must not fail the turn.
+    const endWorkCheckpoint = await captureSessionWorkCheckpoint(projectRoot, cached.workId).catch(() => undefined);
     if (errorMessage) {
       const failedError = errorMessage;
       await appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
@@ -1395,6 +1411,7 @@ async function runAgentSessionUnlocked(
         seq,
         timestamp: Date.now(),
         error: failedError,
+        ...(endWorkCheckpoint ? { workCheckpoint: endWorkCheckpoint } : {}),
       }));
       finishEpisode(turnAborted ? "cancelled" : "failed");
       removeCachedAgent(cacheKey);
@@ -1406,11 +1423,13 @@ async function runAgentSessionUnlocked(
         requestId,
         seq,
         timestamp: Date.now(),
+        ...(endWorkCheckpoint ? { workCheckpoint: endWorkCheckpoint } : {}),
       }));
       cached.lastCommittedSeq = committed.seq;
       finishEpisode(completion?.status === "blocked" ? "failed" : "completed");
     }
   } catch (error) {
+    const endWorkCheckpoint = await captureSessionWorkCheckpoint(projectRoot, cached.workId).catch(() => undefined);
     await appendAgentTranscriptEvent(projectRoot, sessionId, (seq) => ({
       type: "request_failed",
       version: 1,
@@ -1419,6 +1438,7 @@ async function runAgentSessionUnlocked(
       seq,
       timestamp: Date.now(),
       error: error instanceof Error ? error.message : String(error),
+      ...(endWorkCheckpoint ? { workCheckpoint: endWorkCheckpoint } : {}),
     }));
     finishEpisode(isAbortLike(error) ? "cancelled" : "failed");
     removeCachedAgent(cacheKey);
@@ -1461,6 +1481,15 @@ export function evictAgentCache(sessionId: string): boolean {
     deleted = removeCachedAgent(key) || deleted;
   }
   return deleted;
+}
+
+/** Whether a turn in another session of this process is running against the Work. */
+export function hasActiveAgentTurnOnWork(projectRoot: string, workId: string, excludeSessionId?: string): boolean {
+  for (const entry of agentCache.values()) {
+    if (entry.projectRoot !== projectRoot || entry.sessionId === excludeSessionId) continue;
+    if (entry.currentEpisode && (entry.workId ?? entry.bookId) === workId) return true;
+  }
+  return false;
 }
 
 /** Abort an active cached pi-agent session and evict it from cache. */

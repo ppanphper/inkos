@@ -7,11 +7,15 @@ import type {
   ChatSessionKind,
   ChatStore,
   MessageActions,
+  RewindPlan,
+  RewindResult,
   SendMessageOptions,
+  SessionMessage,
   SessionResponse,
   SessionSummary,
   ToolExecution,
 } from "../../types";
+import { editableMessageText, rewindTargetForMessage } from "../../rewind";
 import { fetchJson } from "../../../../hooks/use-api";
 import { tr } from "../../../../lib/app-language";
 import { isConfirmedProductionSend } from "../../message-policy";
@@ -79,6 +83,13 @@ function formatUserMessageForDisplay(text: string, attachments: ReadonlyArray<Ch
   return lines.join("\n");
 }
 
+function apiErrorCode(error: unknown): string | undefined {
+  const payload = (error as { payload?: { error?: { code?: unknown } } } | undefined)?.payload;
+  return typeof payload?.error?.code === "string" ? payload.error.code : undefined;
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
 export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions> = (set, get) => {
   const applyResponseSession = (sessionId: string, metadata: AgentResponse["session"], requestWorkId: string | null | undefined) => {
     if (!metadata) return;
@@ -106,7 +117,10 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
 
   return {
     activateSession: (sessionId) => {
-      set({ activeSessionId: sessionId });
+      set((state) => ({
+        activeSessionId: sessionId,
+        ...(state.editingMessage && state.editingMessage.sessionId !== sessionId ? { editingMessage: null } : {}),
+      }));
     },
 
   setSessionPlayMode: (sessionId, playMode) => {
@@ -124,10 +138,14 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
 
   setInput: (text) => set({ input: text }),
 
-  addUserMessage: (sessionId, content) =>
+  addUserMessage: (sessionId, content, request) =>
     set((state) => ({
       sessions: updateSession(state.sessions, sessionId, (session) => ({
-        messages: [...session.messages, { role: "user", content, timestamp: Date.now() }],
+        messages: [...session.messages, {
+          role: "user", content, timestamp: Date.now(),
+          ...(request?.clientRequestId ? { clientRequestId: request.clientRequestId } : {}),
+          ...(request?.editText !== undefined && request.editText !== content ? { editText: request.editText } : {}),
+        }],
         lastError: null,
       })),
     })),
@@ -406,8 +424,15 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
     const session = get().sessions[sessionId];
     const stoppedAt = Date.now();
     const stoppedMessage = tr("已由用户停止", "Stopped by user");
+    const stoppedUserIndex = session?.isChatStreaming
+      ? session.messages.map((message) => message.role).lastIndexOf("user")
+      : -1;
+    // 被停止的请求在服务端记为失败，不进入模型上下文。
+    const stoppedMessages = stoppedUserIndex < 0 ? session?.messages ?? [] : session!.messages.map((message, index) => (
+      index === stoppedUserIndex ? { ...message, requestStatus: "failed" as const } : message
+    ));
     const messages = markRunningToolsFailed(
-      session?.messages ?? [],
+      stoppedMessages,
       stoppedMessage,
       stoppedAt,
       (execution) => !chatOnly || execution.background !== true,
@@ -627,6 +652,7 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
 
     set((state) => ({
       input: "",
+      editingMessage: null,
       activeSessionId: sessionId,
       sessions: updateSession(state.sessions, sessionId, () => ({
         isStreaming: true,
@@ -639,7 +665,10 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
       })),
     }));
 
-    get().addUserMessage(sessionId, formatUserMessageForDisplay(userInstruction, attachments));
+    get().addUserMessage(sessionId, formatUserMessageForDisplay(userInstruction, attachments), {
+      clientRequestId: sourceRequestId,
+      editText: trimmed,
+    });
     // 单连接原则：任务恢复流等旧连接先关掉，换成本轮的新连接。
     // 运行中的任务卡不受影响——新连接建立时服务端会重放 running 快照，
     // 任务日志（log）与收尾（tool:end）都按 execution id 匹配，与 streamTs 无关。
@@ -803,6 +832,77 @@ export const createMessageSlice: StateCreator<ChatStore, [], [], MessageActions>
         }));
       }
     }
+  },
+
+  beginEditMessage: (sessionId, messageIndex) => {
+    const message = get().sessions[sessionId]?.messages[messageIndex];
+    const target = message ? rewindTargetForMessage(message) : null;
+    if (!message || !target) return;
+    set({ input: editableMessageText(message), editingMessage: { sessionId, messageIndex, target } });
+  },
+
+  cancelEditMessage: () => set({ input: "", editingMessage: null }),
+
+  previewRewind: async (sessionId, target, retryDelayMs = 300) => {
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        const data = await fetchJson<{ plan: RewindPlan }>(`/sessions/${sessionId}/rewind/preview`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(target),
+        });
+        return data.plan;
+      } catch (error) {
+        if (apiErrorCode(error) !== "SESSION_BUSY" || attempt >= 10) throw error;
+        await sleep(retryDelayMs);
+      }
+    }
+  },
+
+  rewindSession: async (sessionId, target, options) => {
+    const body = JSON.stringify({
+      ...target,
+      restoreWork: options.restoreWork,
+      ...(options.expectedRequestIds ? { expectedRequestIds: options.expectedRequestIds } : {}),
+    });
+    let data: { result: RewindResult; session?: { messages?: ReadonlyArray<SessionMessage> } } | undefined;
+    for (let attempt = 0; !data; attempt += 1) {
+      try {
+        data = await fetchJson(`/sessions/${sessionId}/rewind`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body,
+        });
+      } catch (error) {
+        const code = apiErrorCode(error);
+        // 刚停止的请求还在收尾（写入失败记录），稍等片刻再撤回。
+        if (code === "SESSION_BUSY" && attempt < 10) {
+          await sleep(options.retryDelayMs ?? 300);
+          continue;
+        }
+        // 很早就被停止的消息可能从未写入会话记录，也就不在模型上下文中：只需从界面移除。
+        if (code === "REWIND_TARGET_NOT_FOUND" && target.clientRequestId && !target.requestId) {
+          set((state) => ({
+            editingMessage: state.editingMessage?.sessionId === sessionId ? null : state.editingMessage,
+            sessions: updateSession(state.sessions, sessionId, (session) => {
+              const index = session.messages.findIndex((message) => message.clientRequestId === target.clientRequestId);
+              return index < 0 ? {} : { messages: session.messages.slice(0, index), lastFailedSend: undefined, lastError: null };
+            }),
+          }));
+          return null;
+        }
+        throw error;
+      }
+    }
+    const result = data.result;
+    const messages = deserializeMessages(data.session?.messages ?? []);
+    set((state) => ({
+      editingMessage: state.editingMessage?.sessionId === sessionId ? null : state.editingMessage,
+      sessions: updateSession(state.sessions, sessionId, () => ({ messages, lastFailedSend: undefined, lastError: null })),
+      resolvedProposals: { ...state.resolvedProposals, ...deriveResolvedProposals(messages) },
+    }));
+    if (result.workRestored) get().bumpBookDataVersion();
+    return result;
   },
 
   retryLastSend: async (sessionId) => {

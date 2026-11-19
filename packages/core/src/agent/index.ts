@@ -39,6 +39,7 @@ export {
   abortAgentSession,
   runAgentSession,
   evictAgentCache,
+  hasActiveAgentTurnOnWork,
   type AgentSessionAttachment,
   type AgentSessionConfig,
   type AgentSessionResult,

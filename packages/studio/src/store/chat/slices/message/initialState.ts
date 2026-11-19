@@ -5,6 +5,7 @@ export const initialMessageState: MessageState = {
   sessionIdsByBook: {},
   activeSessionId: null,
   input: "",
+  editingMessage: null,
   selectedModel: null,
   selectedService: null,
 };

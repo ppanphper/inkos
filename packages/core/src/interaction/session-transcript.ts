@@ -3,17 +3,36 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { TranscriptEventSchema, type TranscriptEvent } from "./session-transcript-schema.js";
-import type { SessionKind, TranscriptRole } from "./session-transcript-schema.js";
+import type { SessionKind, TranscriptRole, WorkCheckpointRef } from "./session-transcript-schema.js";
+import { captureWorkCheckpoint } from "./work-checkpoint.js";
 
 const SESSIONS_DIR = ".inkos/sessions";
 const appendQueues = new Map<string, Promise<void>>();
+
+/** Requests retracted by a later `requests_rewound` event. */
+export function rewoundRequestIds(events: ReadonlyArray<TranscriptEvent>): Set<string> {
+  return new Set(events.flatMap((event) => event.type === "requests_rewound" ? event.requestIds : []));
+}
+
+/** The Work a session currently targets, from its creation and metadata events. */
+export function sessionWorkIdFromEvents(events: ReadonlyArray<TranscriptEvent>): string | null {
+  let workId: string | null | undefined;
+  let bookId: string | null = null;
+  for (const event of events) {
+    if (event.type !== "session_created" && event.type !== "session_metadata_updated") continue;
+    if (event.workId !== undefined) workId = event.workId;
+    if (event.bookId !== undefined) bookId = event.bookId;
+  }
+  return workId === undefined ? bookId : workId;
+}
 
 /** Recover the request that produced this confirmation, even after other chat turns. */
 export function confirmedRequestInstruction(
   events: ReadonlyArray<TranscriptEvent>, action: string, instruction: string,
 ): string {
+  const rewound = rewoundRequestIds(events);
   for (const event of [...events].reverse()) {
-    if (event.type !== "message" || event.role !== "toolResult") continue;
+    if (event.type !== "message" || event.role !== "toolResult" || rewound.has(event.requestId)) continue;
     const details = (event.message as { details?: Record<string, unknown> }).details;
     if (details?.kind !== "proposed_action" || details.action !== action || details.instruction !== instruction) continue;
     const request = events.find(candidate => candidate.type === "request_started" && candidate.requestId === event.requestId);
@@ -143,6 +162,9 @@ export async function appendManualSessionMessages(
   input = "",
   options: {
     readonly sessionKind?: SessionKind;
+    readonly clientRequestId?: string;
+    /** Work state before the recorded work began, e.g. at a production task's start. */
+    readonly startWorkCheckpoint?: WorkCheckpointRef;
     readonly display?: {
       readonly thinking?: string;
       readonly toolExecutions?: readonly unknown[];
@@ -155,6 +177,9 @@ export async function appendManualSessionMessages(
   if (persistedMessages.length === 0) return;
 
   const requestId = randomUUID();
+  const workId = sessionWorkIdFromEvents(await readTranscriptEvents(projectRoot, sessionId));
+  const endWorkCheckpoint = workId ? await captureWorkCheckpoint(projectRoot, workId).catch(() => undefined) : undefined;
+  const startWorkCheckpoint = options.startWorkCheckpoint ?? endWorkCheckpoint;
   await appendTranscriptEvents(projectRoot, sessionId, ({ nextSeq }) => {
     let seq = nextSeq;
     const events: TranscriptEvent[] = [{
@@ -166,6 +191,8 @@ export async function appendManualSessionMessages(
       timestamp: Date.now(),
       ...(options.sessionKind ? { sessionKind: options.sessionKind } : {}),
       input,
+      ...(options.clientRequestId ? { clientRequestId: options.clientRequestId } : {}),
+      ...(startWorkCheckpoint ? { workCheckpoint: startWorkCheckpoint } : {}),
     }];
 
     let parentUuid: string | null = null;
@@ -212,6 +239,7 @@ export async function appendManualSessionMessages(
       requestId,
       seq,
       timestamp: Date.now(),
+      ...(endWorkCheckpoint ? { workCheckpoint: endWorkCheckpoint } : {}),
     });
     return events;
   });
